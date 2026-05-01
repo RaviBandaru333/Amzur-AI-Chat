@@ -1,6 +1,6 @@
 ﻿import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, Loader2 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import ThreadSidebar from "./components/chat/ThreadSidebar";
 import { api } from "./lib/api";
 import { useAuthStore } from "./lib/authStore";
@@ -46,7 +46,7 @@ function AuthenticatedApp() {
     <div className="app-backdrop flex h-full min-h-0 w-full">
       <ThreadSidebar />
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar model={health?.llm_model} env={health?.environment} online={!!health} />
+        <TopBar env={health?.environment} online={!!health} />
         <main className="min-h-0 flex-1 overflow-hidden">
           <ChatPage />
         </main>
@@ -56,11 +56,9 @@ function AuthenticatedApp() {
 }
 
 function TopBar({
-  model,
   env,
   online,
 }: {
-  model?: string;
   env?: string;
   online: boolean;
 }) {
@@ -68,6 +66,20 @@ function TopBar({
   const availableModels = useSettingsStore((s) => s.availableModels);
   const setSelectedModel = useSettingsStore((s) => s.setSelectedModel);
   const currentModel = availableModels.find((m) => m.id === selectedModel);
+  const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
+  const modelMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!modelMenuRef.current) return;
+      if (event.target instanceof Node && !modelMenuRef.current.contains(event.target)) {
+        setIsModelMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   return (
     <header className="flex items-center justify-between gap-4 border-b border-white/5 bg-ink-900/40 px-6 py-3 backdrop-blur-xl">
@@ -88,19 +100,37 @@ function TopBar({
 
       <div className="flex items-center gap-3">
         <div className="text-xs text-slate-500">Model:</div>
-        <div className="group relative">
-          <button className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-medium text-slate-100 transition hover:border-accent-500/50 hover:bg-white/10">
+        <div ref={modelMenuRef} className="relative">
+          <button
+            type="button"
+            onClick={() => setIsModelMenuOpen((open) => !open)}
+            className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm font-medium text-slate-100 transition hover:border-accent-500/50 hover:bg-white/10"
+          >
             <span className="flex items-center gap-2">
               <span className="h-2 w-2 rounded-full bg-accent-400"></span>
               {currentModel?.name || "Select model"}
             </span>
-            <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+            <ChevronDown
+              className={
+                "h-3.5 w-3.5 text-slate-400 transition-transform " +
+                (isModelMenuOpen ? "rotate-180" : "rotate-0")
+              }
+            />
           </button>
-          <div className="absolute right-0 top-full mt-1 hidden w-56 rounded-lg border border-white/10 bg-ink-950/90 shadow-xl backdrop-blur-xl group-hover:block z-50 max-h-96 overflow-y-auto">
+          <div
+            className={
+              "absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-white/10 bg-ink-950/90 shadow-xl backdrop-blur-xl max-h-96 overflow-y-auto " +
+              (isModelMenuOpen ? "block" : "hidden")
+            }
+          >
             {availableModels.map((m) => (
               <button
                 key={m.id}
-                onClick={() => setSelectedModel(m.id)}
+                type="button"
+                onClick={() => {
+                  setSelectedModel(m.id);
+                  setIsModelMenuOpen(false);
+                }}
                 className={
                   "w-full px-4 py-2.5 text-left text-sm transition " +
                   (selectedModel === m.id

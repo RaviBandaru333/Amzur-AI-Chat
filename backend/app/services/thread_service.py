@@ -11,6 +11,99 @@ from app.core.config import settings
 from app.models import ChatMessageRow, ChatThread, User
 
 
+def _model_type(model_id: str) -> str:
+    """Classify model usage so non-chat models use the correct API route."""
+    lowered = model_id.lower()
+    if "embedding" in lowered:
+        return "embedding"
+    if "imagen" in lowered or "/image" in lowered or "image-" in lowered:
+        return "image"
+    return "chat"
+
+
+def _tracking_without_user(test_type: str) -> dict:
+    """Use explicit end-user email while preserving LiteLLM metadata headers/body."""
+    return {k: v for k, v in tracking_kwargs(test_type).items() if k != "user"}
+
+
+def _generate_assistant_reply(
+    *,
+    client,
+    llm_model: str,
+    user_email: str,
+    history: list[dict[str, str]],
+    prompt: str,
+) -> str:
+    """Generate assistant output for chat, image, or embedding models."""
+    mtype = _model_type(llm_model)
+
+    if mtype == "chat":
+        resp = client.chat.completions.create(
+            model=llm_model,
+            messages=history,
+            max_tokens=1200,
+            temperature=0.7,
+            user=user_email,
+            **_tracking_without_user("chat"),
+        )
+        return resp.choices[0].message.content or ""
+
+    if mtype == "image":
+        img_resp = client.images.generate(
+            model=llm_model,
+            prompt=prompt,
+            response_format="url",  # Explicitly request URL format
+            size="1024x1024",  # Standard size
+            quality="standard",  # Standard quality
+            user=user_email,
+            **_tracking_without_user("image"),
+        )
+        first = img_resp.data[0] if img_resp.data else None
+        if not first:
+            return f"Image generation failed: no data returned by {llm_model}"
+        
+        # Try to get URL first
+        image_url = getattr(first, "url", None)
+        if image_url:
+            return (
+                f"Generated image using {llm_model}.\n\n"
+                f"![Generated image]({image_url})\n\n"
+                f"[Open image]({image_url})"
+            )
+        
+        # Try to get base64 and convert to data URL
+        b64_image = getattr(first, "b64_json", None)
+        if b64_image:
+            data_url = f"data:image/png;base64,{b64_image}"
+            return (
+                f"Generated image using {llm_model}.\n\n"
+                f"![Generated image]({data_url})"
+            )
+        
+        # Log what we actually got for debugging
+        print(f"Image response object: {first}, dir: {dir(first)}")
+        return (
+            f"Image generation completed using {llm_model}, but image data could not be extracted. "
+            f"Response format: {type(first)}"
+        )
+
+    emb_resp = client.embeddings.create(
+        model=llm_model,
+        input=prompt,
+        user=user_email,
+        **_tracking_without_user("embedding"),
+    )
+    vector = emb_resp.data[0].embedding if emb_resp.data else []
+    dims = len(vector)
+    preview = ", ".join(f"{v:.4f}" for v in vector[:8])
+    ellipsis = ", ..." if dims > 8 else ""
+    return (
+        f"Generated embedding using {llm_model}.\n\n"
+        f"Vector dimensions: {dims}\n"
+        f"Preview: [{preview}{ellipsis}]"
+    )
+
+
 async def list_threads(db: AsyncSession, user: User) -> list[ChatThread]:
     res = await db.execute(
         select(ChatThread)
@@ -114,19 +207,20 @@ async def send_message(
 
     client = get_llm_client()
     llm_model = model or settings.LLM_MODEL
-    resp = client.chat.completions.create(
-        model=llm_model,
-        messages=history,
-        max_tokens=1200,
-        temperature=0.7,
-        user=user.email,
-        **{
-            k: v
-            for k, v in tracking_kwargs("chat").items()
-            if k != "user"
-        },
-    )
-    reply = resp.choices[0].message.content or ""
+    try:
+        reply = _generate_assistant_reply(
+            client=client,
+            llm_model=llm_model,
+            user_email=user.email,
+            history=history,
+            prompt=content,
+        )
+    except Exception as exc:
+        reply = (
+            f"Model '{llm_model}' could not complete this request. "
+            f"Details: {exc}"
+        )
+
     assistant_msg = await _save_message(db, thread, "assistant", reply)
 
     if is_first:
@@ -191,19 +285,20 @@ async def edit_message(
     # Generate new assistant response
     client = get_llm_client()
     llm_model = model or settings.LLM_MODEL
-    resp = client.chat.completions.create(
-        model=llm_model,
-        messages=history,
-        max_tokens=1200,
-        temperature=0.7,
-        user=user.email,
-        **{
-            k: v
-            for k, v in tracking_kwargs("chat").items()
-            if k != "user"
-        },
-    )
-    reply = resp.choices[0].message.content or ""
+    try:
+        reply = _generate_assistant_reply(
+            client=client,
+            llm_model=llm_model,
+            user_email=user.email,
+            history=history,
+            prompt=new_content,
+        )
+    except Exception as exc:
+        reply = (
+            f"Model '{llm_model}' could not complete this request. "
+            f"Details: {exc}"
+        )
+
     await _save_message(db, thread, "assistant", reply)
 
     # Refresh and return
