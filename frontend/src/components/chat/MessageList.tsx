@@ -176,17 +176,23 @@ function Bubble({
           </button>
         )}
       </div>
-      <div className="prose prose-invert prose-sm max-w-none prose-p:text-justify prose-p:leading-relaxed prose-headings:mt-2 prose-headings:mb-2 prose-pre:bg-transparent prose-pre:p-0 prose-pre:m-0 prose-code:before:content-none prose-code:after:content-none">
+      <div className="prose prose-invert prose-sm max-w-none prose-p:text-justify prose-p:leading-relaxed prose-headings:mt-2 prose-headings:mb-2 prose-pre:bg-transparent prose-pre:p-0 prose-pre:m-0 prose-code:before:content-none prose-code:after:content-none prose-img:max-w-lg prose-img:h-auto prose-img:rounded-lg prose-img:my-2 prose-img:shadow-lg">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{
             img({ src, alt }) {
+              if (!src) return null;
               return (
                 <img
                   src={src}
                   alt={alt || "Generated image"}
-                  className="max-w-full h-auto rounded-lg my-2 shadow-lg"
-                  style={{ maxWidth: "100%", maxHeight: "400px" }}
+                  className="block w-full max-w-lg h-auto rounded-lg my-2 shadow-lg"
+                  style={{ display: "block", maxWidth: "100%", maxHeight: "500px", objectFit: "contain" }}
+                  onError={(e) => {
+                    console.error("Image failed to load:", src);
+                    (e.target as HTMLImageElement).style.display = "none";
+                  }}
+                  onLoad={() => console.log("Image loaded:", src)}
                 />
               );
             },
@@ -201,6 +207,9 @@ function Bubble({
                   {children}
                 </a>
               );
+            },
+            p({ children }) {
+              return <p className="text-justify leading-relaxed my-1">{children}</p>;
             },
             code({ className, children, ...rest }) {
               const match = /language-(\w+)/.exec(className || "");

@@ -64,27 +64,38 @@ def _generate_assistant_reply(
         
         # Try to get URL first
         image_url = getattr(first, "url", None)
+        print(f"DEBUG: Image response first: {first}")
+        print(f"DEBUG: Image URL: {image_url}")
+        print(f"DEBUG: Image response attributes: {dir(first)}")
+        
         if image_url:
-            return (
+            markdown_response = (
                 f"Generated image using {llm_model}.\n\n"
                 f"![Generated image]({image_url})\n\n"
                 f"[Open image]({image_url})"
             )
+            print(f"DEBUG: Markdown response:\n{markdown_response}")
+            return markdown_response
         
         # Try to get base64 and convert to data URL
         b64_image = getattr(first, "b64_json", None)
         if b64_image:
             data_url = f"data:image/png;base64,{b64_image}"
-            return (
+            markdown_response = (
                 f"Generated image using {llm_model}.\n\n"
                 f"![Generated image]({data_url})"
             )
+            print(f"DEBUG: Base64 markdown response (truncated):\n{markdown_response[:200]}")
+            return markdown_response
         
         # Log what we actually got for debugging
-        print(f"Image response object: {first}, dir: {dir(first)}")
+        print(f"Image response object: {first}")
+        print(f"Dir of first: {dir(first)}")
+        print(f"First.__dict__: {getattr(first, '__dict__', 'No __dict__')}")
+        
         return (
             f"Image generation completed using {llm_model}, but image data could not be extracted. "
-            f"Response format: {type(first)}"
+            f"Response object type: {type(first)}"
         )
 
     emb_resp = client.embeddings.create(
