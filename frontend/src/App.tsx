@@ -77,7 +77,7 @@ function TopBar({
             "h-2 w-2 rounded-full " + (online ? "bg-emerald-400" : "bg-red-400")
           }
         />
-        <span className="font-medium">{model ?? "connecting…"}</span>
+        <span className="font-medium">{currentModel?.name ?? "connecting…"}</span>
         {env && (
           <>
             <span className="text-slate-600">·</span>
@@ -96,7 +96,7 @@ function TopBar({
             </span>
             <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
           </button>
-          <div className="absolute right-0 top-full mt-1 hidden w-56 rounded-lg border border-white/10 bg-ink-950/90 shadow-xl backdrop-blur-xl group-hover:block z-50">
+          <div className="absolute right-0 top-full mt-1 hidden w-56 rounded-lg border border-white/10 bg-ink-950/90 shadow-xl backdrop-blur-xl group-hover:block z-50 max-h-96 overflow-y-auto">
             {availableModels.map((m) => (
               <button
                 key={m.id}

@@ -4,7 +4,7 @@ from app.core.config import settings
 
 
 async def get_available_models() -> list[dict]:
-    """Fetch available models from LiteLLM proxy and filter for chat models."""
+    """Fetch all available models from LiteLLM proxy."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
@@ -14,33 +14,39 @@ async def get_available_models() -> list[dict]:
             resp.raise_for_status()
             data = resp.json()
 
-            # Filter for chat-capable models (exclude embeddings and image generation)
+            # Include ALL models from LiteLLM
             models = data.get("data", [])
-            chat_models = []
+            available_models = []
 
             for model in models:
                 model_id = model.get("id", "")
-                # Include models that are chat-capable
-                # Exclude embedding and image models
-                if not any(
-                    x in model_id.lower()
-                    for x in ["embedding", "imagen", "image", "embed"]
-                ):
-                    chat_models.append(
-                        {
-                            "id": model_id,
-                            "name": model_id.replace("gemini/", "").replace("-", " ").title(),
-                            "provider": (
-                                "Google"
-                                if "gemini" in model_id.lower()
-                                else "OpenAI"
-                                if "gpt" in model_id.lower()
-                                else "Other"
-                            ),
-                        }
-                    )
+                
+                # Create friendly name
+                if "gemini" in model_id.lower():
+                    provider = "Google"
+                    name = model_id.replace("gemini/", "").replace("-", " ").title()
+                elif "gpt" in model_id.lower():
+                    provider = "OpenAI"
+                    name = model_id.upper()
+                elif "embedding" in model_id.lower():
+                    provider = "OpenAI"
+                    name = model_id.replace("-", " ").title()
+                elif "imagen" in model_id.lower():
+                    provider = "Google"
+                    name = model_id.replace("gemini/", "").replace("-", " ").title()
+                else:
+                    provider = "Other"
+                    name = model_id.replace("-", " ").title()
 
-            return chat_models
+                available_models.append(
+                    {
+                        "id": model_id,
+                        "name": name,
+                        "provider": provider,
+                    }
+                )
+
+            return available_models
     except Exception as e:
         print(f"Error fetching models from LiteLLM: {e}")
         # Fallback to default models
@@ -51,4 +57,15 @@ async def get_available_models() -> list[dict]:
                 "name": "Gemini 2.5 Flash",
                 "provider": "Google",
             },
+            {
+                "id": "text-embedding-3-large",
+                "name": "Text Embedding 3 Large",
+                "provider": "OpenAI",
+            },
+            {
+                "id": "gemini/imagen-4.0-fast-generate-001",
+                "name": "Imagen 4.0 Fast Generate",
+                "provider": "Google",
+            },
         ]
+
