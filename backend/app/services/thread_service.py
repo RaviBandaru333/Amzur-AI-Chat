@@ -1,6 +1,9 @@
 """Thread + message persistence and DB-backed chat orchestration."""
+import base64
+from pathlib import Path
 import uuid
 
+import httpx
 from fastapi import HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +27,48 @@ def _model_type(model_id: str) -> str:
 def _tracking_without_user(test_type: str) -> dict:
     """Use explicit end-user email while preserving LiteLLM metadata headers/body."""
     return {k: v for k, v in tracking_kwargs(test_type).items() if k != "user"}
+
+
+def _uploads_dir() -> Path:
+    path = Path(settings.UPLOAD_DIR)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _extension_from_content_type(content_type: str | None) -> str:
+    if not content_type:
+        return "png"
+    ctype = content_type.lower()
+    if "jpeg" in ctype or "jpg" in ctype:
+        return "jpg"
+    if "webp" in ctype:
+        return "webp"
+    if "gif" in ctype:
+        return "gif"
+    return "png"
+
+
+def _save_generated_image(image_bytes: bytes, ext: str = "png") -> str:
+    filename = f"gen_{uuid.uuid4().hex}.{ext}"
+    path = _uploads_dir() / filename
+    path.write_bytes(image_bytes)
+    return f"{settings.BACKEND_PUBLIC_URL.rstrip('/')}/uploads/{filename}"
+
+
+def _decode_b64_image(b64_value: str) -> bytes | None:
+    if not b64_value:
+        return None
+    payload = b64_value.split(",", 1)[1] if "," in b64_value else b64_value
+    try:
+        return base64.b64decode(payload)
+    except Exception:
+        return None
+
+
+def _value_from_item(item, key: str):
+    if isinstance(item, dict):
+        return item.get(key)
+    return getattr(item, key, None)
 
 
 def _generate_assistant_reply(
@@ -52,50 +97,48 @@ def _generate_assistant_reply(
         img_resp = client.images.generate(
             model=llm_model,
             prompt=prompt,
-            response_format="url",  # Explicitly request URL format
-            size="1024x1024",  # Standard size
-            quality="standard",  # Standard quality
             user=user_email,
             **_tracking_without_user("image"),
         )
         first = img_resp.data[0] if img_resp.data else None
         if not first:
             return f"Image generation failed: no data returned by {llm_model}"
-        
-        # Try to get URL first
-        image_url = getattr(first, "url", None)
-        print(f"DEBUG: Image response first: {first}")
-        print(f"DEBUG: Image URL: {image_url}")
-        print(f"DEBUG: Image response attributes: {dir(first)}")
-        
+
+        # Some providers return base64 image content.
+        b64_image = _value_from_item(first, "b64_json")
+        image_bytes = _decode_b64_image(b64_image) if b64_image else None
+        if image_bytes:
+            local_url = _save_generated_image(image_bytes, "png")
+            return (
+                f"Generated image using {llm_model}.\n\n"
+                f"![Generated image]({local_url})\n\n"
+                f"[Open image]({local_url})"
+            )
+
+        # Some providers return a URL; fetch and store locally for reliable rendering.
+        image_url = _value_from_item(first, "url")
         if image_url:
-            markdown_response = (
-                f"Generated image using {llm_model}.\n\n"
-                f"![Generated image]({image_url})\n\n"
-                f"[Open image]({image_url})"
-            )
-            print(f"DEBUG: Markdown response:\n{markdown_response}")
-            return markdown_response
-        
-        # Try to get base64 and convert to data URL
-        b64_image = getattr(first, "b64_json", None)
-        if b64_image:
-            data_url = f"data:image/png;base64,{b64_image}"
-            markdown_response = (
-                f"Generated image using {llm_model}.\n\n"
-                f"![Generated image]({data_url})"
-            )
-            print(f"DEBUG: Base64 markdown response (truncated):\n{markdown_response[:200]}")
-            return markdown_response
-        
-        # Log what we actually got for debugging
-        print(f"Image response object: {first}")
-        print(f"Dir of first: {dir(first)}")
-        print(f"First.__dict__: {getattr(first, '__dict__', 'No __dict__')}")
-        
+            try:
+                with httpx.Client(timeout=30.0, follow_redirects=True) as http_client:
+                    fetched = http_client.get(image_url)
+                    fetched.raise_for_status()
+                ext = _extension_from_content_type(fetched.headers.get("content-type"))
+                local_url = _save_generated_image(fetched.content, ext)
+                return (
+                    f"Generated image using {llm_model}.\n\n"
+                    f"![Generated image]({local_url})\n\n"
+                    f"[Open image]({local_url})"
+                )
+            except Exception:
+                # Fallback to direct provider URL if proxy-download fails.
+                return (
+                    f"Generated image using {llm_model}.\n\n"
+                    f"![Generated image]({image_url})\n\n"
+                    f"[Open image]({image_url})"
+                )
+
         return (
-            f"Image generation completed using {llm_model}, but image data could not be extracted. "
-            f"Response object type: {type(first)}"
+            f"Image generation completed using {llm_model}, but no displayable image payload was returned."
         )
 
     emb_resp = client.embeddings.create(

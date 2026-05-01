@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     GOOGLE_SERVICE_ACCOUNT_JSON: Optional[str] = None
     MAX_UPLOAD_MB: int = 20
     UPLOAD_DIR: str = "./uploads"
+    BACKEND_PUBLIC_URL: str = "http://localhost:8000"
 
     # CORS
     FRONTEND_ORIGIN: str = "http://localhost:5173"

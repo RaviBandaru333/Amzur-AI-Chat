@@ -78,7 +78,6 @@ export default function MessageList({ messages, busy }: Props) {
             </div>
           ) : (
             <Bubble
-              id={m.id}
               role={m.role}
               content={m.content}
               timestamp={m.created_at}
@@ -128,13 +127,11 @@ function Avatar({ role }: { role: string }) {
 }
 
 function Bubble({
-  id,
   role,
   content,
   timestamp,
   onEdit,
 }: {
-  id: string;
   role: string;
   content: string;
   timestamp: string;
@@ -188,11 +185,6 @@ function Bubble({
                   alt={alt || "Generated image"}
                   className="block w-full max-w-lg h-auto rounded-lg my-2 shadow-lg"
                   style={{ display: "block", maxWidth: "100%", maxHeight: "500px", objectFit: "contain" }}
-                  onError={(e) => {
-                    console.error("Image failed to load:", src);
-                    (e.target as HTMLImageElement).style.display = "none";
-                  }}
-                  onLoad={() => console.log("Image loaded:", src)}
                 />
               );
             },
