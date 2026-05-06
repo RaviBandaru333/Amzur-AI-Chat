@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { MessageRow, Thread } from "../types";
+import type { ChatMode, MessageRow, Thread } from "../types";
 import { api } from "./api";
 import { useSettingsStore } from "./settingsStore";
 
@@ -14,7 +14,7 @@ interface ChatState {
   createThread: () => Promise<string>;
   deleteThread: (id: string) => Promise<void>;
   renameThread: (id: string, title: string) => Promise<void>;
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string, attachments?: File[], mode?: ChatMode) => Promise<void>;
   editMessage: (messageId: string, newContent: string) => Promise<void>;
   reset: () => void;
 }
@@ -66,23 +66,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
   },
 
-  sendMessage: async (content: string) => {
+  sendMessage: async (content: string, attachments: File[] = [], mode: ChatMode = "chat") => {
     let { activeId } = get();
     if (!activeId) {
       activeId = await get().createThread();
     }
+
+    let composedContent = content;
+    if (attachments.length > 0) {
+      const uploaded = await api.uploadFiles(attachments);
+      const lines = uploaded.map(
+        (f) =>
+          `- [${f.filename}](${f.url}) (${f.content_type}, ${Math.max(1, Math.round(f.size / 1024))}KB)`
+      );
+      composedContent = `${content}\n\nAttached files:\n${lines.join("\n")}`;
+    }
+
     // Optimistic: add user msg
     const userMsg: MessageRow = {
       id: crypto.randomUUID(),
       role: "user",
-      content,
+      content: composedContent,
       created_at: new Date().toISOString(),
     };
     set((s) => ({ messages: [...s.messages, userMsg], loading: true }));
 
     try {
       const model = useSettingsStore.getState().selectedModel;
-      const detail = await api.sendMessage(activeId!, content, model);
+      const detail = await api.sendMessage(activeId!, composedContent, model, mode);
       // Update messages from server (has assistant response + correct IDs)
       set((s) => ({
         messages: detail.messages,

@@ -40,6 +40,25 @@ def add_documents(user_id: str | int, ids: Iterable[str], texts: Iterable[str]) 
     coll.add(ids=list(ids), documents=list(texts))
 
 
-def query(user_id: str | int, q: str, n: int = 3):
+def upsert_documents(
+    user_id: str | int,
+    ids: Iterable[str],
+    texts: Iterable[str],
+    metadatas: Iterable[dict] | None = None,
+) -> None:
     coll = get_user_collection(user_id)
-    return coll.query(query_texts=[q], n_results=n)
+    payload: dict = {
+        "ids": list(ids),
+        "documents": list(texts),
+    }
+    if metadatas is not None:
+        payload["metadatas"] = list(metadatas)
+    coll.upsert(**payload)
+
+
+def query(user_id: str | int, q: str, n: int = 3, where: dict | None = None):
+    coll = get_user_collection(user_id)
+    payload: dict = {"query_texts": [q], "n_results": n}
+    if where:
+        payload["where"] = where
+    return coll.query(**payload)

@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "gpt-4o"
     LITELLM_EMBEDDING_MODEL: str = "text-embedding-3-large"
     IMAGE_GEN_MODEL: str = "gemini/imagen-4.0-fast-generate-001"
+    NEWSAPI_KEY: Optional[str] = None
+    CRICAPI_KEY: Optional[str] = None
+    THENEWSAPI_TOKEN: Optional[str] = None
+    LIVE_API_TIMEOUT_SECONDS: int = 8
 
     # Google OAuth
     GOOGLE_CLIENT_ID: Optional[str] = None
@@ -39,6 +43,57 @@ class Settings(BaseSettings):
     MAX_UPLOAD_MB: int = 20
     UPLOAD_DIR: str = "./uploads"
     BACKEND_PUBLIC_URL: str = "http://localhost:8000"
+    ALLOWED_UPLOAD_MIME_TYPES: list[str] = [
+        "text/plain",
+        "text/markdown",
+        "text/csv",
+        "text/html",
+        "text/xml",
+        "application/pdf",
+        "application/json",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+        "application/xml",
+        "application/yaml",
+        "application/x-yaml",
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/gif",
+        "video/mp4",
+        "video/webm",
+        "video/quicktime",
+    ]
+    ALLOWED_UPLOAD_EXTENSIONS: list[str] = [
+        ".txt",
+        ".md",
+        ".csv",
+        ".pdf",
+        ".json",
+        ".docx",
+        ".doc",
+        ".xlsx",
+        ".xls",
+        ".html",
+        ".xml",
+        ".yaml",
+        ".yml",
+        ".py",
+        ".js",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+        ".gif",
+        ".mp4",
+        ".webm",
+        ".mov",
+    ]
 
     # CORS
     FRONTEND_ORIGIN: str = "http://localhost:5173"

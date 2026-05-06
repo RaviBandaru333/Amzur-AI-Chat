@@ -16,7 +16,15 @@ from app.schemas.chat import (
     SummarizeRequest,
     SummarizeResponse,
 )
+from app.schemas.file import UploadFilesResponse, UploadedFileOut
 from app.schemas.note import NoteBase, NoteCreate, NoteOut, NoteUpdate
+from app.schemas.live import LiveChatRequest, LiveChatResponse
+from app.schemas.sql import (
+    SQLAskRequest,
+    SQLAskResponse,
+    SQLGenerateRequest,
+    SQLGenerateResponse,
+)
 
 __all__ = [
     "NoteBase",
@@ -28,6 +36,14 @@ __all__ = [
     "ChatResponse",
     "SummarizeRequest",
     "SummarizeResponse",
+    "UploadedFileOut",
+    "UploadFilesResponse",
+    "LiveChatRequest",
+    "LiveChatResponse",
+    "SQLGenerateRequest",
+    "SQLGenerateResponse",
+    "SQLAskRequest",
+    "SQLAskResponse",
     "UserOut",
     "RegisterRequest",
     "LoginRequest",

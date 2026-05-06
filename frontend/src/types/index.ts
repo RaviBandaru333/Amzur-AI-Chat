@@ -54,3 +54,12 @@ export interface ThreadDetail extends Thread {
   messages: MessageRow[];
 }
 
+export interface UploadedFileAsset {
+  filename: string;
+  content_type: string;
+  size: number;
+  url: string;
+}
+
+export type ChatMode = "chat" | "sql" | "live";
+

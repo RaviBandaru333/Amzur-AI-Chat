@@ -1,10 +1,135 @@
 ﻿import { Bot, Edit2, User } from "lucide-react";
 import { useState } from "react";
+import rehypeKatex from "rehype-katex";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import { useChatStore } from "../../lib/chatStore";
 import type { MessageRow } from "../../types";
+import ChartCard from "./ChartCard";
 import CodeBlock from "./CodeBlock";
+import MermaidBlock from "./MermaidBlock";
+import TableCard from "./TableCard";
+import VideoEmbed from "./VideoEmbed";
+
+interface ChartPayload {
+  type: "chart";
+  chartType: "bar" | "line" | "pie";
+  title: string;
+  labels: string[];
+  data: number[];
+  xAxisLabel?: string;
+  yAxisLabel?: string;
+}
+
+interface TablePayload {
+  type: "table";
+  title: string;
+  columns: string[];
+  rows: Array<Array<string | number | boolean | null>>;
+}
+
+interface TextPayload {
+  type: "text";
+  content: string;
+}
+
+function parseStructuredContent(content: string): ChartPayload | TablePayload | TextPayload | null {
+  try {
+    const parsed = JSON.parse(content) as Record<string, unknown>;
+    if (
+      parsed.type === "chart" &&
+      (parsed.chartType === "bar" || parsed.chartType === "line" || parsed.chartType === "pie") &&
+      Array.isArray(parsed.labels) &&
+      Array.isArray(parsed.data)
+    ) {
+      return {
+        type: "chart",
+        chartType: parsed.chartType,
+        title: typeof parsed.title === "string" ? parsed.title : "Chart",
+        labels: parsed.labels.map((value) => String(value)),
+        data: parsed.data.map((value) => Number(value)),
+        xAxisLabel: typeof parsed.xAxisLabel === "string" ? parsed.xAxisLabel : "",
+        yAxisLabel: typeof parsed.yAxisLabel === "string" ? parsed.yAxisLabel : "",
+      };
+    }
+
+    if (
+      parsed.type === "table" &&
+      Array.isArray(parsed.columns) &&
+      Array.isArray(parsed.rows) &&
+      parsed.rows.every((row) => Array.isArray(row))
+    ) {
+      return {
+        type: "table",
+        title: typeof parsed.title === "string" ? parsed.title : "Table",
+        columns: parsed.columns.map((column) => String(column)),
+        rows: parsed.rows.map((row) =>
+          (row as unknown[]).map((cell) => {
+            if (
+              typeof cell === "string" ||
+              typeof cell === "number" ||
+              typeof cell === "boolean" ||
+              cell === null
+            ) {
+              return cell;
+            }
+            return String(cell);
+          })
+        ),
+      };
+    }
+
+    if (parsed.type === "text" && typeof parsed.content === "string") {
+      return {
+        type: "text",
+        content: parsed.content,
+      };
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function extractVideoUrls(content: string): string[] {
+  const matches = content.match(/https?:\/\/[^\s)\]>"']+/gi) ?? [];
+  const unique = new Set<string>();
+
+  for (const match of matches) {
+    const cleaned = match.replace(/[)>.,;!?]+$/g, "");
+    if (isHostedVideoUrl(cleaned) || isVideoUrl(cleaned)) {
+      unique.add(cleaned);
+    }
+  }
+
+  return [...unique];
+}
+
+function isImageUrl(url: string) {
+  return /\.(png|jpe?g|gif|webp|svg)(\?|#|$)/i.test(url) || url.startsWith("data:image/");
+}
+
+function isVideoUrl(url: string) {
+  return /\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i.test(url) || url.startsWith("data:video/");
+}
+
+function isHostedVideoUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace("www.", "");
+    return (
+      host === "youtu.be" ||
+      host === "youtube.com" ||
+      host === "m.youtube.com" ||
+      host === "vimeo.com" ||
+      host === "player.vimeo.com"
+    );
+  } catch {
+    return false;
+  }
+}
 
 interface Props {
   messages: MessageRow[];
@@ -36,7 +161,7 @@ export default function MessageList({ messages, busy }: Props) {
   };
 
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-8">
+    <div className="mx-auto flex w-full max-w-5xl flex-col gap-3 px-3 py-4 sm:px-4 sm:py-5">
       {messages.map((m) => (
         <div key={m.id} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
           {editingId === m.id ? (
@@ -149,6 +274,11 @@ function Bubble({
     day: "numeric",
     year: "numeric",
   });
+  const structuredContent = !isUser ? parseStructuredContent(content) : null;
+  const chartPayload = structuredContent?.type === "chart" ? structuredContent : null;
+  const tablePayload = structuredContent?.type === "table" ? structuredContent : null;
+  const markdownContent = structuredContent?.type === "text" ? structuredContent.content : content;
+  const detectedVideoUrls = !isUser ? extractVideoUrls(markdownContent) : [];
 
   const bubbleContent = (
     <div
@@ -161,7 +291,7 @@ function Bubble({
     >
       <div className="mb-1 flex items-center justify-between">
         <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-          {isUser ? "You" : "Amzur AI"}
+          {isUser ? "You" : "AI"}
         </div>
         {isUser && (
           <button
@@ -173,74 +303,126 @@ function Bubble({
           </button>
         )}
       </div>
-      <div className="prose prose-invert prose-sm max-w-none prose-p:text-justify prose-p:leading-relaxed prose-headings:mt-2 prose-headings:mb-2 prose-pre:bg-transparent prose-pre:p-0 prose-pre:m-0 prose-code:before:content-none prose-code:after:content-none prose-img:max-w-lg prose-img:h-auto prose-img:rounded-lg prose-img:my-2 prose-img:shadow-lg">
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          components={{
-            img({ src, alt }) {
-              if (!src) return null;
-              return (
-                <img
-                  src={src}
-                  alt={alt || "Generated image"}
-                  className="block w-full max-w-lg h-auto rounded-lg my-2 shadow-lg"
-                  style={{ display: "block", maxWidth: "100%", maxHeight: "500px", objectFit: "contain" }}
-                />
-              );
-            },
-            a({ href, children }) {
-              return (
-                <a
-                  href={href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-accent-400 hover:text-accent-300 underline"
-                >
-                  {children}
-                </a>
-              );
-            },
-            p({ children }) {
-              return <p className="text-justify leading-relaxed my-1">{children}</p>;
-            },
-            code({ className, children, ...rest }) {
-              const match = /language-(\w+)/.exec(className || "");
-              const isBlock =
-                (
-                  rest as {
-                    node?: {
-                      position?: {
-                        start: { line: number };
-                        end: { line: number };
+      {chartPayload ? (
+        <ChartCard payload={chartPayload} />
+      ) : tablePayload ? (
+        <TableCard payload={tablePayload} />
+      ) : (
+        <div className="prose prose-invert prose-sm max-w-none prose-p:text-justify prose-p:leading-relaxed prose-headings:mt-2 prose-headings:mb-2 prose-pre:bg-transparent prose-pre:p-0 prose-pre:m-0 prose-code:before:content-none prose-code:after:content-none prose-img:max-w-lg prose-img:h-auto prose-img:rounded-lg prose-img:my-2 prose-img:shadow-lg prose-table:block prose-table:overflow-x-auto prose-th:border prose-th:border-white/20 prose-th:bg-white/5 prose-th:px-3 prose-th:py-2 prose-td:border prose-td:border-white/10 prose-td:px-3 prose-td:py-2">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm, remarkMath]}
+            rehypePlugins={[rehypeKatex]}
+            components={{
+              img({ src, alt }) {
+                if (!src) return null;
+                return (
+                  <img
+                    src={src}
+                    alt={alt || "Generated image"}
+                    className="block w-full max-w-lg h-auto rounded-lg my-2 shadow-lg"
+                    style={{ display: "block", maxWidth: "100%", maxHeight: "500px", objectFit: "contain" }}
+                  />
+                );
+              },
+              a({ href, children }) {
+                if (!href) return <>{children}</>;
+
+                if (href && isImageUrl(href)) {
+                  return (
+                    <img
+                      src={href}
+                      alt={typeof children === "string" ? children : "Linked image"}
+                      className="block w-full max-w-lg h-auto rounded-lg my-2 shadow-lg"
+                      style={{ maxWidth: "100%", maxHeight: "500px", objectFit: "contain" }}
+                    />
+                  );
+                }
+
+                return (
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-accent-400 hover:text-accent-300 underline"
+                  >
+                    {children}
+                  </a>
+                );
+              },
+              p({ children }) {
+                return <p className="text-justify leading-relaxed my-1">{children}</p>;
+              },
+              table({ children }) {
+                return (
+                  <div className="my-3 w-full overflow-x-auto rounded-lg border border-white/10">
+                    <table className="w-full min-w-[520px] border-collapse text-sm">{children}</table>
+                  </div>
+                );
+              },
+              thead({ children }) {
+                return <thead className="bg-white/5">{children}</thead>;
+              },
+              th({ children }) {
+                return (
+                  <th className="border border-white/20 px-3 py-2 text-left font-semibold text-slate-200">
+                    {children}
+                  </th>
+                );
+              },
+              td({ children }) {
+                return <td className="border border-white/10 px-3 py-2 text-slate-200">{children}</td>;
+              },
+              code({ className, children, ...rest }) {
+                const match = /language-(\w+)/.exec(className || "");
+                const language = (match?.[1] ?? "").toLowerCase();
+                const isBlock =
+                  (
+                    rest as {
+                      node?: {
+                        position?: {
+                          start: { line: number };
+                          end: { line: number };
+                        };
                       };
-                    };
-                  }
-                ).node?.position?.start.line !==
-                (
-                  rest as {
-                    node?: {
-                      position?: {
-                        start: { line: number };
-                        end: { line: number };
+                    }
+                  ).node?.position?.start.line !==
+                  (
+                    rest as {
+                      node?: {
+                        position?: {
+                          start: { line: number };
+                          end: { line: number };
+                        };
                       };
-                    };
-                  }
-                ).node?.position?.end.line;
-              const text = String(children ?? "");
-              if (match || isBlock) {
-                return <CodeBlock language={match?.[1] ?? ""} code={text} />;
-              }
-              return (
-                <code className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-[0.85em] text-violet-400">
-                  {children}
-                </code>
-              );
-            },
-          }}
-        >
-          {content}
-        </ReactMarkdown>
-      </div>
+                    }
+                  ).node?.position?.end.line;
+                const text = String(children ?? "");
+                if (language === "mermaid") {
+                  return <MermaidBlock code={text} />;
+                }
+                if (match || isBlock) {
+                  return <CodeBlock language={match?.[1] ?? ""} code={text} />;
+                }
+                return (
+                  <code className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-[0.85em] text-violet-400">
+                    {children}
+                  </code>
+                );
+              },
+            }}
+          >
+            {markdownContent}
+          </ReactMarkdown>
+
+          {detectedVideoUrls.length > 0 && (
+            <div className="mt-3 space-y-3">
+              {detectedVideoUrls.map((videoUrl) => (
+                <VideoEmbed key={videoUrl} url={videoUrl} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 

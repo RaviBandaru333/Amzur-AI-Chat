@@ -1,4 +1,4 @@
-# Amzur AI Chatbot — NoteTaker Foundation
+# AI Chatbot — NoteTaker Foundation
 
 Foundation built per the ATG AI Chatbot training setup checklist + Siva's NoteTaker recommendation.
 Stack: **FastAPI · SQLAlchemy (async) · Alembic · Supabase Postgres · LiteLLM proxy · React (Vite + TS)**.

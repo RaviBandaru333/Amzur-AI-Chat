@@ -1,5 +1,5 @@
 ﻿import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, Loader2 } from "lucide-react";
+import { ChevronDown, Loader2, PanelLeft } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import ThreadSidebar from "./components/chat/ThreadSidebar";
 import { api } from "./lib/api";
@@ -37,6 +37,7 @@ function AuthenticatedApp() {
   });
 
   const loadAvailableModels = useSettingsStore((s) => s.loadAvailableModels);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   useEffect(() => {
     loadAvailableModels();
@@ -44,9 +45,15 @@ function AuthenticatedApp() {
 
   return (
     <div className="app-backdrop flex h-full min-h-0 w-full">
-      <ThreadSidebar />
+      <ThreadSidebar
+        collapsed={sidebarCollapsed}
+      />
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar env={health?.environment} online={!!health} />
+        <TopBar
+          env={health?.environment}
+          online={!!health}
+          onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
+        />
         <main className="min-h-0 flex-1 overflow-hidden">
           <ChatPage />
         </main>
@@ -58,9 +65,11 @@ function AuthenticatedApp() {
 function TopBar({
   env,
   online,
+  onToggleSidebar,
 }: {
   env?: string;
   online: boolean;
+  onToggleSidebar: () => void;
 }) {
   const selectedModel = useSettingsStore((s) => s.selectedModel);
   const availableModels = useSettingsStore((s) => s.availableModels);
@@ -83,7 +92,16 @@ function TopBar({
 
   return (
     <header className="flex items-center justify-between gap-4 border-b border-white/5 bg-ink-900/40 px-6 py-3 backdrop-blur-xl">
-      <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-300 sm:flex">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onToggleSidebar}
+          className="rounded-lg border border-white/10 bg-white/5 p-2 text-slate-300 transition hover:bg-white/10 hover:text-white"
+          title="Toggle sidebar"
+        >
+          <PanelLeft className="h-4 w-4" />
+        </button>
+        <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-300 sm:flex">
         <span
           className={
             "h-2 w-2 rounded-full " + (online ? "bg-emerald-400" : "bg-red-400")
@@ -96,6 +114,7 @@ function TopBar({
             <span className="text-slate-400">{env}</span>
           </>
         )}
+        </div>
       </div>
 
       <div className="flex items-center gap-3">

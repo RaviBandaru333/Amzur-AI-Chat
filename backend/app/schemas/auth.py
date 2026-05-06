@@ -55,3 +55,4 @@ class ThreadUpdate(BaseModel):
 class SendMessageRequest(BaseModel):
     content: str
     model: str | None = None
+    mode: str | None = None

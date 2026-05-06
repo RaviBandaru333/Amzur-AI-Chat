@@ -72,7 +72,7 @@ async def send_message(
     db: AsyncSession = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
-    await thread_service.send_message(db, current, thread_id, req.content, req.model)
+    await thread_service.send_message(db, current, thread_id, req.content, req.model, req.mode)
     # Return the full updated thread (with messages) for simple frontend handling.
     return await thread_service.get_thread(db, current, thread_id)
 
@@ -86,5 +86,5 @@ async def edit_message(
     current: User = Depends(get_current_user),
 ):
     return await thread_service.edit_message(
-        db, current, thread_id, message_id, req.content, req.model
+        db, current, thread_id, message_id, req.content, req.model, req.mode
     )

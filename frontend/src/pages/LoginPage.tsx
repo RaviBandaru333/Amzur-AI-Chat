@@ -39,7 +39,7 @@ export default function LoginPage() {
             <Sparkles className="h-7 w-7 text-white" strokeWidth={2.4} />
           </div>
           <h1 className="text-2xl font-semibold tracking-tight text-white">
-            Amzur AI Chat
+            AI Chat
           </h1>
           <p className="text-sm text-slate-400">
             Sign in with your @amzur.com credentials

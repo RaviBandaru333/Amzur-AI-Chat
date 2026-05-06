@@ -3,7 +3,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
-from app.schemas import ChatRequest, ChatResponse, SummarizeRequest, SummarizeResponse
+from app.schemas import (
+    ChatRequest,
+    ChatResponse,
+    LiveChatRequest,
+    LiveChatResponse,
+    SummarizeRequest,
+    SummarizeResponse,
+)
 from app.services import chat_service, notes_service
 
 router = APIRouter(prefix="/api", tags=["llm"])
@@ -15,6 +22,14 @@ async def chat(req: ChatRequest):
         return chat_service.chat(req.messages, req.model)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"LLM error: {e}") from e
+
+
+@router.post("/live-chat", response_model=LiveChatResponse)
+async def live_chat(req: LiveChatRequest):
+    try:
+        return chat_service.run_live_query(req.query, user_email="anonymous", model=req.model)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Live data error: {e}") from e
 
 
 @router.post("/summarize", response_model=SummarizeResponse)

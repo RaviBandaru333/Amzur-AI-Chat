@@ -3,6 +3,13 @@ from app.ai.rag.vectorstore import (
     get_chroma_client,
     get_user_collection,
     query,
+    upsert_documents,
 )
 
-__all__ = ["get_chroma_client", "get_user_collection", "add_documents", "query"]
+__all__ = [
+    "get_chroma_client",
+    "get_user_collection",
+    "add_documents",
+    "upsert_documents",
+    "query",
+]

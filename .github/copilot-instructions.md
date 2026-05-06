@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Amzur AI Chat is an internal multi-user conversational AI platform. It provides threaded persistent chat, email/password and Google OAuth authentication, conversational memory, multi-modal input (images, video, code, PDF), AI image generation, RAG over uploaded documents, and natural language querying of databases and spreadsheets.
+AI Chat is an internal multi-user conversational AI platform. It provides threaded persistent chat, email/password and Google OAuth authentication, conversational memory, multi-modal input (images, video, code, PDF), AI image generation, RAG over uploaded documents, and natural language querying of databases and spreadsheets.
 
 All AI calls route exclusively through the Amzur LiteLLM proxy at `litellm.amzur.com`. Direct calls to any AI provider (OpenAI, Google, Anthropic) are not permitted.
 

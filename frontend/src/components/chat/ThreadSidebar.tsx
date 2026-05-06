@@ -1,9 +1,13 @@
-import { LogOut, MessageSquarePlus, Pencil, Sparkles, Trash2 } from "lucide-react";
+import { LogOut, MessageSquarePlus, Pencil, Search, Sparkles, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useAuthStore } from "../../lib/authStore";
 import { useChatStore } from "../../lib/chatStore";
 
-export default function ThreadSidebar() {
+interface Props {
+  collapsed: boolean;
+}
+
+export default function ThreadSidebar({ collapsed }: Props) {
   const threads = useChatStore((s) => s.threads);
   const activeId = useChatStore((s) => s.activeId);
   const loadThreads = useChatStore((s) => s.loadThreads);
@@ -16,6 +20,7 @@ export default function ThreadSidebar() {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     loadThreads();
@@ -39,46 +44,75 @@ export default function ThreadSidebar() {
     setEditText("");
   };
 
+  const filteredThreads = threads.filter((t) =>
+    (t.title || "Untitled").toLowerCase().includes(search.trim().toLowerCase())
+  );
+
   return (
-    <aside className="flex h-full w-72 shrink-0 flex-col border-r border-white/5 bg-ink-900/60 backdrop-blur-xl">
-      <div className="flex items-center gap-2 px-4 py-4">
+    <aside
+      className={
+        "flex h-full shrink-0 flex-col border-r border-white/5 bg-ink-900/60 backdrop-blur-xl transition-all " +
+        (collapsed ? "w-16" : "w-72")
+      }
+    >
+      <div className={"flex items-center px-4 py-4 " + (collapsed ? "justify-center" : "gap-2")}> 
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-accent-500 to-fuchsia-500 shadow-lg shadow-accent-500/30">
           <Sparkles className="h-4 w-4 text-white" strokeWidth={2.5} />
         </div>
-        <div className="leading-tight">
-          <div className="text-sm font-semibold tracking-tight">Amzur AI</div>
-          <div className="text-[10px] uppercase tracking-widest text-slate-500">
-            Chat
+        {!collapsed && (
+          <div className="leading-tight">
+            <div className="text-sm font-semibold tracking-tight">AI</div>
+            <div className="text-[10px] uppercase tracking-widest text-slate-500">Chat</div>
           </div>
-        </div>
+        )}
       </div>
 
       <div className="px-3">
         <button
           onClick={() => createThread()}
-          className="group flex w-full cursor-pointer items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-slate-100 transition hover:border-accent-500/50 hover:bg-white/10"
+          className={
+            "group flex w-full cursor-pointer items-center rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-slate-100 transition hover:border-accent-500/50 hover:bg-white/10 " +
+            (collapsed ? "justify-center" : "gap-2")
+          }
+          title="New chat"
         >
           <MessageSquarePlus className="h-4 w-4 text-accent-400" />
-          New chat
+          {!collapsed && "New chat"}
         </button>
       </div>
 
-      <div className="mt-4 px-3 text-[10px] font-semibold uppercase tracking-widest text-slate-500">
-        Threads
-      </div>
-      <nav className="mt-2 flex-1 space-y-1 overflow-y-auto px-2 pb-4">
-        {threads.length === 0 && (
+      {!collapsed && (
+        <div className="mt-3 px-3">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2 top-2.5 h-3.5 w-3.5 text-slate-500" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search chats"
+              className="w-full rounded-lg border border-white/10 bg-white/5 py-2 pl-7 pr-2 text-xs text-slate-100 placeholder:text-slate-500 outline-none transition focus:border-accent-500/40"
+            />
+          </div>
+        </div>
+      )}
+
+      {!collapsed && (
+        <div className="mt-3 px-3 text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+          Threads
+        </div>
+      )}
+      <nav className="mt-2 flex-1 space-y-0.5 overflow-y-auto px-2 pb-3">
+        {filteredThreads.length === 0 && !collapsed && (
           <div className="px-3 py-6 text-center text-xs text-slate-500">
-            No conversations yet.
+            {threads.length === 0 ? "No conversations yet." : "No chats match your search."}
           </div>
         )}
-        {threads.map((t) => {
+        {filteredThreads.map((t) => {
           const isActive = t.id === activeId;
           const isEditing = editingId === t.id;
 
           return (
             <div key={t.id}>
-              {isEditing ? (
+              {isEditing && !collapsed ? (
                 <div className="flex gap-2 rounded-lg bg-white/10 px-3 py-2">
                   <input
                     type="text"
@@ -108,16 +142,17 @@ export default function ThreadSidebar() {
               ) : (
                 <div
                   className={
-                    "group flex cursor-pointer flex-col gap-1 rounded-lg px-3 py-2 text-sm transition " +
+                    "group flex cursor-pointer flex-col gap-0.5 rounded-lg px-2.5 py-1.5 text-sm transition " +
                     (isActive
                       ? "bg-white/10 text-white"
                       : "text-slate-300 hover:bg-white/5 hover:text-white")
                   }
                   onClick={() => selectThread(t.id)}
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="truncate flex-1">{t.title || "Untitled"}</span>
-                    <div className="ml-auto flex gap-1 opacity-0 transition group-hover:opacity-100">
+                  <div className={"flex w-full items-center " + (collapsed ? "justify-center" : "gap-2")}> 
+                    {!collapsed && <span className="truncate flex-1">{t.title || "Untitled"}</span>}
+                    {collapsed && <span className="h-2 w-2 rounded-full bg-slate-400" />}
+                    {!collapsed && <div className="ml-auto flex gap-1 opacity-0 transition group-hover:opacity-100">
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -138,16 +173,17 @@ export default function ThreadSidebar() {
                       >
                         <Trash2 className="h-3.5 w-3.5 text-slate-400 hover:text-red-400" />
                       </button>
-                    </div>
+                    </div>}
                   </div>
-                  <div className="text-[10px] text-slate-500 opacity-0 transition group-hover:opacity-100">
-                    {new Date(t.updated_at).toLocaleDateString("en-US", {
+                  {!collapsed && <div className="text-[10px] text-slate-500">
+                    {new Date(t.updated_at).toLocaleString("en-US", {
                       month: "short",
                       day: "numeric",
                       hour: "2-digit",
                       minute: "2-digit",
+                      hour12: true,
                     })}
-                  </div>
+                  </div>}
                 </div>
               )}
             </div>
@@ -156,7 +192,7 @@ export default function ThreadSidebar() {
       </nav>
 
       <div className="border-t border-white/5 px-4 py-3">
-        <div className="flex items-center gap-2">
+        <div className={"flex items-center " + (collapsed ? "justify-center" : "gap-2")}>
           {user?.avatar_url ? (
             <img
               src={user.avatar_url}
@@ -168,14 +204,14 @@ export default function ThreadSidebar() {
               {(user?.full_name ?? user?.email ?? "?")[0].toUpperCase()}
             </div>
           )}
-          <div className="min-w-0 flex-1">
+          {!collapsed && <div className="min-w-0 flex-1">
             <div className="truncate text-xs font-medium text-slate-200">
               {user?.full_name || user?.email}
             </div>
             {user?.full_name && (
               <div className="truncate text-[10px] text-slate-500">{user.email}</div>
             )}
-          </div>
+          </div>}
           <button
             onClick={logout}
             className="rounded p-1 text-slate-400 transition hover:bg-white/10 hover:text-white"

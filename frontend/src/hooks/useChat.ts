@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { useChatStore } from "../lib/chatStore";
-import type { MessageRow } from "../types";
+import type { ChatMode, MessageRow } from "../types";
 
 export function useChat() {
   const messages: MessageRow[] = useChatStore((s) => s.messages);
@@ -10,11 +10,11 @@ export function useChat() {
   const [error, setError] = useState<string | null>(null);
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, attachments: File[] = [], mode: ChatMode = "chat") => {
       if (!text.trim()) return;
       setError(null);
       try {
-        await sendMessage(text.trim());
+        await sendMessage(text.trim(), attachments, mode);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }

@@ -1,8 +1,9 @@
 import { Code2, Lightbulb, PenLine, Sparkles } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import InputBar from "../components/chat/InputBar";
 import MessageList from "../components/chat/MessageList";
 import { useChat } from "../hooks/useChat";
+import type { ChatMode } from "../types";
 
 const SUGGESTIONS = [
   {
@@ -27,10 +28,76 @@ const SUGGESTIONS = [
   },
 ];
 
+const DB_EXAMPLES = [
+  "How many users are registered?",
+  "Show the latest 10 chat threads.",
+  "How many messages were created today?",
+  "List top 5 users by number of threads.",
+  "Show notes created in the last 7 days.",
+  "What are the most recently updated notes?",
+];
+
+const LIVE_EXAMPLES = [
+  "What cricket matches are on today?",
+  "What's the current Bitcoin price?",
+  "Show latest business news from India",
+  "What's the weather like today?",
+  "Show top headlines from The Hindu",
+  "Latest news from Economic Times",
+  "Show Reliance stock price trend",
+  "What's happening in IPL today?",
+  "Show NDTV India top news",
+  "Latest finance news from Moneycontrol",
+];
+
 export default function ChatPage() {
   const { messages, busy, error, send } = useChat();
   const [input, setInput] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const [mode, setMode] = useState<ChatMode>("chat");
   const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  const followUps = useMemo(() => {
+    const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+    if (!lastAssistant?.content) return [] as string[];
+
+    const content = lastAssistant.content.toLowerCase();
+    const base = [
+      "Can you explain this in simpler terms?",
+      "Give me a concise summary in 5 bullet points.",
+      "Show this as a table.",
+      "What should I do next step-by-step?",
+    ];
+
+    if (content.includes("```") || content.includes("code")) {
+      return [
+        "Can you optimize the code and explain time complexity?",
+        "Add edge-case handling and tests for this.",
+        "Convert this solution to Python and TypeScript.",
+        "Explain each part of the code line by line.",
+      ];
+    }
+
+    if (content.includes("table") || content.includes("|")) {
+      return [
+        "Can you highlight the key insights from this table?",
+        "Create a visual chart suggestion from this data.",
+        "Compare the top 3 rows and explain differences.",
+        "Export this in CSV format.",
+      ];
+    }
+
+    if (content.includes("equation") || content.includes("$") || content.includes("formula")) {
+      return [
+        "Solve one example using this formula.",
+        "Explain when this formula should not be used.",
+        "Show derivation in simple steps.",
+        "Create practice questions with answers.",
+      ];
+    }
+
+    return base;
+  }, [messages]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -39,12 +106,31 @@ export default function ChatPage() {
 
   const onSend = async () => {
     const text = input;
-    if (!text.trim()) return;
+    if (!text.trim() && files.length === 0) return;
     setInput("");
-    await send(text);
+    const selectedFiles = files;
+    setFiles([]);
+    await send(text || "Analyze the attached files and answer.", selectedFiles, mode);
   };
 
   const empty = messages.length === 0;
+
+  const onPickFollowUp = async (prompt: string) => {
+    if (busy) return;
+    await send(prompt);
+  };
+
+  const onRunDbExample = async (prompt: string) => {
+    if (busy) return;
+    setInput("");
+    await send(prompt, [], "sql");
+  };
+
+  const onRunLiveExample = async (prompt: string) => {
+    if (busy) return;
+    setInput("");
+    await send(prompt, [], "live");
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -52,7 +138,27 @@ export default function ChatPage() {
         {empty ? (
           <Hero onPick={(p) => setInput(p)} />
         ) : (
-          <MessageList messages={messages} busy={busy} />
+          <>
+            <MessageList messages={messages} busy={busy} />
+            {!busy && followUps.length > 0 && (
+              <div className="mx-auto mb-2 w-full max-w-5xl px-3 sm:px-4">
+                <div className="mb-2 text-xs font-medium uppercase tracking-wider text-slate-400">
+                  Suggested follow-ups
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {followUps.map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => void onPickFollowUp(s)}
+                      className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-slate-200 transition hover:border-accent-500/40 hover:bg-white/10"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
         )}
         {error && (
           <div className="mx-auto mb-4 max-w-3xl px-4">
@@ -62,7 +168,87 @@ export default function ChatPage() {
           </div>
         )}
       </div>
-      <InputBar value={input} busy={busy} onChange={setInput} onSend={onSend} />
+      <div className="mx-auto mb-2 flex w-full max-w-5xl items-center justify-between gap-2 px-3 sm:px-4">
+        <div className="text-xs text-slate-500">
+          {mode === "sql"
+            ? "Database mode: query your DB in plain English"
+            : mode === "live"
+              ? "Live mode: real-time data from external APIs"
+              : "Chat mode: general assistant responses"}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setMode((m) => (m === "live" ? "chat" : "live"))}
+            className={
+              "rounded-full border px-3 py-1 text-xs font-semibold transition " +
+              (mode === "live"
+                ? "border-sky-400/40 bg-sky-500/10 text-sky-300"
+                : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10")
+            }
+            title="Toggle live data mode"
+          >
+            {mode === "live" ? "⚡ Live: ON" : "⚡ Live: OFF"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode((m) => (m === "sql" ? "chat" : "sql"))}
+            className={
+              "rounded-full border px-3 py-1 text-xs font-semibold transition " +
+              (mode === "sql"
+                ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-300"
+                : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10")
+            }
+            title="Toggle database mode"
+          >
+            {mode === "sql" ? "DB Mode: ON" : "DB Mode: OFF"}
+          </button>
+        </div>
+      </div>
+      {mode === "sql" && (
+        <div className="mx-auto mb-2 w-full max-w-5xl px-3 sm:px-4">
+          <div className="mb-2 text-xs font-medium uppercase tracking-wider text-emerald-300">
+            Try Database Questions
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {DB_EXAMPLES.map((prompt) => (
+              <button
+                key={prompt}
+                onClick={() => void onRunDbExample(prompt)}
+                className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1.5 text-sm text-emerald-200 transition hover:border-emerald-300/50 hover:bg-emerald-500/20"
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {mode === "live" && (
+        <div className="mx-auto mb-2 w-full max-w-5xl px-3 sm:px-4">
+          <div className="mb-2 text-xs font-medium uppercase tracking-wider text-sky-300">
+            ⚡ Live Data — Ask Anything
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {LIVE_EXAMPLES.map((prompt) => (
+              <button
+                key={prompt}
+                onClick={() => void onRunLiveExample(prompt)}
+                className="rounded-full border border-sky-400/30 bg-sky-500/10 px-3 py-1.5 text-sm text-sky-200 transition hover:border-sky-300/50 hover:bg-sky-500/20"
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <InputBar
+        value={input}
+        files={files}
+        busy={busy}
+        onChange={setInput}
+        onFilesChange={setFiles}
+        onSend={onSend}
+      />
     </div>
   );
 }
