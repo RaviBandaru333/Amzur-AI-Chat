@@ -23,9 +23,8 @@ def _issue_session(response: Response, user: User) -> None:
 
 
 @router.post("/register", response_model=UserOut)
-async def register(req: RegisterRequest, response: Response, db: AsyncSession = Depends(get_db)):
+async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     user = await auth_service.register_employee(db, req.email, req.password, req.full_name)
-    _issue_session(response, user)
     return user
 
 

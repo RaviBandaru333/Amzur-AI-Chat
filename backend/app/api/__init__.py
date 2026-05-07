@@ -1,6 +1,7 @@
 """HTTP routers — no business logic, delegate to app/services."""
 from fastapi import APIRouter
 
+from app.api import agent as agent_routes
 from app.api import auth as auth_routes
 from app.api import chat as chat_routes
 from app.api import files as files_routes
@@ -19,5 +20,6 @@ api_router.include_router(notes_routes.router)
 api_router.include_router(chat_routes.router)
 api_router.include_router(sheets_routes.router)
 api_router.include_router(sql_routes.router)
+api_router.include_router(agent_routes.router)
 
 __all__ = ["api_router"]

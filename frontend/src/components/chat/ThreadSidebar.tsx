@@ -97,7 +97,7 @@ export default function ThreadSidebar({ collapsed }: Props) {
 
       {!collapsed && (
         <div className="mt-3 px-3 text-[10px] font-semibold uppercase tracking-widest text-slate-500">
-          Threads
+          Recent Chat
         </div>
       )}
       <nav className="mt-2 flex-1 space-y-0.5 overflow-y-auto px-2 pb-3">

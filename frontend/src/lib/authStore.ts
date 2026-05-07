@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { User } from "../types";
 import { api } from "./api";
+import { useChatStore } from "./chatStore";
 
 interface AuthState {
   user: User | null;
@@ -31,6 +32,8 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ loading: true, error: null });
     try {
       const user = await api.login(email, password);
+      // Fresh session: clear any chat state from a previous user on this device.
+      useChatStore.getState().reset();
       set({ user, loading: false });
     } catch (e) {
       set({ loading: false, error: e instanceof Error ? e.message : "Login failed" });
@@ -41,8 +44,9 @@ export const useAuthStore = create<AuthState>((set) => ({
   register: async (email, password, fullName) => {
     set({ loading: true, error: null });
     try {
-      const user = await api.register(email, password, fullName);
-      set({ user, loading: false });
+      await api.register(email, password, fullName);
+      // Do NOT auto-login — user must sign in explicitly after registering.
+      set({ loading: false });
     } catch (e) {
       set({ loading: false, error: e instanceof Error ? e.message : "Registration failed" });
       throw e;
@@ -51,6 +55,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   logout: async () => {
     await api.logout().catch(() => {});
+    useChatStore.getState().reset();
     set({ user: null });
   },
 }));

@@ -215,10 +215,9 @@ export default function MessageList({ messages, busy }: Props) {
         <div className="flex justify-start">
           <div className="flex items-start gap-3 animate-fade-in-up">
             <Avatar role="assistant" />
-            <div className="flex items-center gap-1 rounded-2xl bg-white/5 px-4 py-3">
-              <Dot />
-              <Dot delay="150ms" />
-              <Dot delay="300ms" />
+            <div className="flex items-center gap-2 rounded-2xl bg-white/5 px-4 py-3">
+              <ThinkingSpinner />
+              <span className="text-sm text-slate-300">AI is thinking…</span>
             </div>
           </div>
         </div>
@@ -227,15 +226,14 @@ export default function MessageList({ messages, busy }: Props) {
   );
 }
 
-function Dot({ delay }: { delay?: string }) {
+function ThinkingSpinner() {
   return (
     <span
-      className="h-1.5 w-1.5 rounded-full bg-slate-400"
-      style={{ animation: "blink 1.2s infinite", animationDelay: delay }}
+      className="inline-block h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-slate-400 border-t-transparent"
+      aria-label="loading"
     />
   );
 }
-
 function Avatar({ role }: { role: string }) {
   if (role === "user") {
     return (

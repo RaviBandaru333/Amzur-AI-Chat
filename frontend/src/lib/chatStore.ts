@@ -3,6 +3,29 @@ import type { ChatMode, MessageRow, Thread } from "../types";
 import { api } from "./api";
 import { useSettingsStore } from "./settingsStore";
 
+// Persisted across reloads so the user lands back on the thread they had open.
+const ACTIVE_THREAD_KEY = "chat.activeThreadId";
+
+function readPersistedActiveId(): string | null {
+  try {
+    return typeof window !== "undefined"
+      ? window.localStorage.getItem(ACTIVE_THREAD_KEY)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function writePersistedActiveId(id: string | null): void {
+  try {
+    if (typeof window === "undefined") return;
+    if (id) window.localStorage.setItem(ACTIVE_THREAD_KEY, id);
+    else window.localStorage.removeItem(ACTIVE_THREAD_KEY);
+  } catch {
+    /* ignore quota / private-mode errors */
+  }
+}
+
 interface ChatState {
   threads: Thread[];
   activeId: string | null;
@@ -28,10 +51,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
   loadThreads: async () => {
     const threads = await api.listThreads();
     set({ threads });
+    // Auto-select a thread on first load / page refresh so the user is
+    // never dropped onto an empty Hero state when they have existing chats.
+    const { activeId } = get();
+    if (activeId) return;
+    const persisted = readPersistedActiveId();
+    const restoreId =
+      (persisted && threads.some((t) => t.id === persisted) ? persisted : null) ??
+      threads[0]?.id ??
+      null;
+    if (restoreId) {
+      await get().selectThread(restoreId);
+    }
   },
 
   selectThread: async (id: string) => {
     set({ activeId: id, loading: true });
+    writePersistedActiveId(id);
     try {
       const detail = await api.getThread(id);
       set({ messages: detail.messages, loading: false });
@@ -47,6 +83,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeId: t.id,
       messages: [],
     }));
+    writePersistedActiveId(t.id);
     return t.id;
   },
 
@@ -55,6 +92,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((s) => {
       const threads = s.threads.filter((t) => t.id !== id);
       const activeId = s.activeId === id ? threads[0]?.id ?? null : s.activeId;
+      if (s.activeId === id) writePersistedActiveId(activeId);
       return { threads, activeId, messages: s.activeId === id ? [] : s.messages };
     });
   },
@@ -104,7 +142,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ),
       }));
     } catch (e) {
-      set({ loading: false });
+      // Roll back the optimistic message: it was never persisted server-side,
+      // so leaving it in the UI would let the user "edit" a phantom message
+      // by id, producing a 404 "Message not found" on the PATCH endpoint.
+      set((s) => ({
+        messages: s.messages.filter((m) => m.id !== userMsg.id),
+        loading: false,
+      }));
       throw e;
     }
   },
@@ -130,5 +174,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  reset: () => set({ threads: [], activeId: null, messages: [], loading: false }),
+  reset: () => {
+    writePersistedActiveId(null);
+    set({ threads: [], activeId: null, messages: [], loading: false });
+  },
 }));

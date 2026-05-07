@@ -9,6 +9,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const login = useAuthStore((s) => s.login);
@@ -17,12 +18,18 @@ export default function LoginPage() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setInfo(null);
     setBusy(true);
     try {
       if (mode === "login") {
         await login(email, password);
       } else {
         await register(email, password, fullName || undefined);
+        // Registration succeeded — switch to login mode and prompt user to sign in.
+        setMode("login");
+        setPassword("");
+        setFullName("");
+        setInfo("Account created. Please sign in to continue.");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -42,7 +49,7 @@ export default function LoginPage() {
             AI Chat
           </h1>
           <p className="text-sm text-slate-400">
-            Sign in with your @amzur.com credentials
+            Sign in with your email to continue
           </p>
         </div>
 
@@ -58,7 +65,7 @@ export default function LoginPage() {
           )}
           <input
             type="email"
-            placeholder="Email (e.g. you@amzur.com)"
+            placeholder="Email"
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -75,10 +82,13 @@ export default function LoginPage() {
           {error && (
             <p className="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</p>
           )}
+          {info && !error && (
+            <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">{info}</p>
+          )}
           <button
             type="submit"
             disabled={busy}
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-accent-500 to-fuchsia-500 px-4 py-2.5 text-sm font-medium text-white shadow-lg shadow-accent-500/30 transition hover:brightness-110 disabled:opacity-50"
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-accent-500 to-fuchsia-500 px-4 py-2.5 text-sm font-medium text-white shadow-lg shadow-accent-500/30 transition hover:brightness-110 disabled:opacity-50 cursor-pointer"
           >
             <KeyRound className="h-4 w-4" />
             {mode === "login" ? "Sign in" : "Create account"}
@@ -87,8 +97,12 @@ export default function LoginPage() {
 
         <div className="flex flex-col items-center gap-3">
           <button
-            onClick={() => setMode(mode === "login" ? "register" : "login")}
-            className="text-sm text-slate-400 transition hover:text-white"
+            onClick={() => {
+              setMode(mode === "login" ? "register" : "login");
+              setError(null);
+              setInfo(null);
+            }}
+            className="text-sm text-slate-400 transition hover:text-white cursor-pointer"
           >
             {mode === "login" ? "Need an account? Register" : "Already have an account? Sign in"}
           </button>

@@ -88,3 +88,13 @@ async def edit_message(
     return await thread_service.edit_message(
         db, current, thread_id, message_id, req.content, req.model, req.mode
     )
+
+
+@router.get("/{thread_id}/suggestions", response_model=list[str])
+async def suggest_follow_ups(
+    thread_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    """Return 4 context-aware follow-up question suggestions for this thread."""
+    return await thread_service.suggest_follow_ups(db, current, thread_id)

@@ -26,12 +26,23 @@ from app.services.rich_content import generate_chart_or_text_response, is_visual
 from app.services import sql_service, api_service, llm_service
 from app.services.sheets_service import read_sheet
 
-# Keywords that auto-trigger live data fetch even without explicit mode="live"
+# Live-signal keywords — auto-triggers real API fetch before LLM reply.
+# ONLY specific domain keywords are listed. Generic time words (today, now, current, latest)
+# are intentionally excluded to avoid false positives on questions like
+# "what is today's special day?" that should be answered from LLM training knowledge.
 _LIVE_AUTO_KEYWORDS = frozenset([
-    "weather", "cricket", "ipl", "match score", "live score",
-    "bitcoin", "crypto", "ethereum", "stock price", "share price",
+    # ── crypto / finance ────────────────────────────────────────────────────
+    "bitcoin", "crypto", "ethereum", "nifty", "sensex",
+    "stock price", "share price", "mutual fund", "nifty 50",
+    # ── sports ──────────────────────────────────────────────────────────────
+    "cricket", "ipl", "live score", "match score",
+    # ── news compound phrases (specific) ────────────────────────────────────
     "latest news", "today news", "breaking news", "headlines today",
-    "current weather", "temperature today", "market today", "nifty", "sensex",
+    "market today", "today headlines",
+    # ── weather (always live context) ───────────────────────────────────────
+    "weather", "weather forecast", "current weather", "temperature today",
+    # ── geopolitical events ──────────────────────────────────────────────────
+    "war", "conflict", "outbreak",
 ])
 
 
@@ -541,13 +552,75 @@ def _generate_assistant_reply(
         # Triggered when mode="live" OR the query contains a recognised live keyword.
         auto_live = any(kw in question.lower() for kw in _LIVE_AUTO_KEYWORDS)
         if mode_lower == "live" or auto_live:
-            live_data = api_service.get_live_data(question)
-            if live_data.get("has_data"):
-                return llm_service.ask_llm(question, live_data, user_email=user_email, model=llm_model)
-            # API fetch returned nothing useful — use LLM fallback only when explicit mode
-            if mode_lower == "live":
-                return llm_service.ask_llm_fallback(question, user_email=user_email, model=llm_model)
-            # auto-detected but no data: fall through to normal chat below
+            answer: str | None = None
+
+            # Multi-intent path: detect 2+ categories → targeted per-category fetch
+            # → strict sectioned formatter (one section per intent, in order).
+            try:
+                intents = api_service.detect_multiple_intents(question)
+            except Exception:
+                intents = []
+
+            try:
+                if len(intents) >= 2:
+                    multi_data = api_service.get_multi_intent_data(question)
+                    if multi_data.get("success_count", 0) > 0:
+                        answer = llm_service.ask_llm_multi_intent(
+                            question, multi_data, user_email=user_email, model=llm_model
+                        )
+                elif len(intents) == 1:
+                    # Single intent: fetch only its sources, then let the LLM
+                    # reason over the data (and fall back to training knowledge
+                    # when the data doesn't directly answer).
+                    multi_data = api_service.get_multi_intent_data(question)
+                    if multi_data.get("success_count", 0) > 0:
+                        answer = llm_service.ask_llm(
+                            question, multi_data, user_email=user_email, model=llm_model
+                        )
+            except Exception:
+                answer = None
+
+            # Generic live fetch fallback (covers queries that didn't match any
+            # intent but still contained a live keyword).
+            if not answer:
+                try:
+                    live_data = api_service.get_live_data(question)
+                    if live_data.get("has_data"):
+                        answer = llm_service.ask_llm(
+                            question, live_data, user_email=user_email, model=llm_model
+                        )
+                except Exception:
+                    answer = None
+
+            # Sanity check: reject empty / "no data" / "I don't have" replies and
+            # rescue them with a training-knowledge fallback so the user always
+            # gets something useful.
+            def _is_unhelpful(text: str | None) -> bool:
+                if not text or not text.strip():
+                    return True
+                low = text.lower()
+                bad_phrases = (
+                    "i don't have real-time", "i do not have real-time",
+                    "i don't have access to real-time", "no data found",
+                    "i'm unable to provide real-time", "i am unable to provide real-time",
+                    "i cannot access real-time", "data not available right now.\n\n[",
+                )
+                return any(p in low for p in bad_phrases)
+
+            if _is_unhelpful(answer):
+                try:
+                    answer = llm_service.ask_llm_fallback(
+                        question, user_email=user_email, model=llm_model
+                    )
+                except Exception as exc:
+                    answer = (
+                        "I couldn't reach the live data sources right now and the "
+                        f"fallback model also failed ({exc}). Please try again."
+                    )
+
+            if answer:
+                return answer
+            # If we somehow still have no answer, fall through to normal chat below.
 
         # ── SQL / spreadsheet mode ─────────────────────────────────────────────
         if mode_lower == "sql":
@@ -606,15 +679,50 @@ def _generate_assistant_reply(
         return generate_chart_or_text_response(client, llm_model, user_email, prompt, history=history)
 
     if mtype == "image":
-        img_resp = client.images.generate(
-            model=llm_model,
-            prompt=prompt,
-            user=user_email,
-            **_tracking_without_user("image"),
-        )
+        # Some LiteLLM proxies register Imagen under a different alias than the
+        # canonical Vertex name. Try a couple of common variants before giving
+        # up so the user sees a useful image instead of a confusing 404.
+        candidate_models: list[str] = []
+        seen: set[str] = set()
+        for cand in (
+            llm_model,
+            llm_model.split("/", 1)[1] if "/" in llm_model else llm_model,
+            f"vertex_ai/{llm_model.split('/', 1)[1]}" if "/" in llm_model else llm_model,
+            settings.IMAGE_GEN_MODEL,
+        ):
+            if cand and cand not in seen:
+                seen.add(cand)
+                candidate_models.append(cand)
+
+        last_error: Exception | None = None
+        img_resp = None
+        used_model = llm_model
+        for cand in candidate_models:
+            try:
+                img_resp = client.images.generate(
+                    model=cand,
+                    prompt=prompt,
+                    user=user_email,
+                    **_tracking_without_user("image"),
+                )
+                used_model = cand
+                break
+            except Exception as exc:  # noqa: BLE001 — surface any provider error
+                last_error = exc
+                continue
+
+        if img_resp is None:
+            # All candidates failed — return the proxy's own message verbatim so
+            # the user can see exactly why (404 model_not_found / 401 / etc.).
+            tried = ", ".join(candidate_models)
+            return (
+                f"Image generation failed for `{llm_model}` "
+                f"(also tried: {tried}).\n\nError: {last_error}"
+            )
+
         first = img_resp.data[0] if img_resp.data else None
         if not first:
-            return f"Image generation failed: no data returned by {llm_model}"
+            return f"Image generation failed: no data returned by {used_model}"
 
         # Some providers return base64 image content.
         b64_image = _value_from_item(first, "b64_json")
@@ -622,7 +730,7 @@ def _generate_assistant_reply(
         if image_bytes:
             local_url = _save_generated_image(image_bytes, "png")
             return (
-                f"Generated image using {llm_model}.\n\n"
+                f"Generated image using {used_model}.\n\n"
                 f"![Generated image]({local_url})\n\n"
                 f"[Open image]({local_url})"
             )
@@ -637,20 +745,20 @@ def _generate_assistant_reply(
                 ext = _extension_from_content_type(fetched.headers.get("content-type"))
                 local_url = _save_generated_image(fetched.content, ext)
                 return (
-                    f"Generated image using {llm_model}.\n\n"
+                    f"Generated image using {used_model}.\n\n"
                     f"![Generated image]({local_url})\n\n"
                     f"[Open image]({local_url})"
                 )
             except Exception:
                 # Fallback to direct provider URL if proxy-download fails.
                 return (
-                    f"Generated image using {llm_model}.\n\n"
+                    f"Generated image using {used_model}.\n\n"
                     f"![Generated image]({image_url})\n\n"
                     f"[Open image]({image_url})"
                 )
 
         return (
-            f"Image generation completed using {llm_model}, but no displayable image payload was returned."
+            f"Image generation completed using {used_model}, but no displayable image payload was returned."
         )
 
     emb_resp = client.embeddings.create(
@@ -886,3 +994,145 @@ async def edit_message(
     # Refresh and return
     await db.refresh(thread, ["messages"])
     return thread
+
+
+async def suggest_follow_ups(
+    db: AsyncSession,
+    user: User,
+    thread_id: uuid.UUID,
+    model: str | None = None,
+) -> list[str]:
+    """Generate 4 context-aware follow-up suggestions based on the recent chat history.
+
+    Uses the LLM with the last few exchanges as context. If the call fails or returns
+    nothing usable, returns a small set of generic prompts as a graceful fallback.
+    """
+    thread = await get_thread(db, user, thread_id)
+    if not thread.messages:
+        return []
+
+    # Take the last 6 messages (3 exchanges) — enough context, low token cost.
+    recent = thread.messages[-6:]
+    transcript_lines: list[str] = []
+    for m in recent:
+        role = "User" if m.role == "user" else "Assistant"
+        text = (m.content or "").strip()
+        # Truncate any one message at 800 chars so a giant code dump doesn't dominate.
+        if len(text) > 800:
+            text = text[:800] + "…"
+        transcript_lines.append(f"{role}: {text}")
+    transcript = "\n\n".join(transcript_lines)
+
+    system_prompt = (
+        "You generate short, helpful next-question suggestions for a chat user, "
+        "in the same style as Codex/Claude/Gemini.\n"
+        "STRICT OUTPUT RULES:\n"
+        "- Output EXACTLY 4 lines, each containing one suggestion.\n"
+        "- No preamble, no numbering, no bullets, no dashes, no quotes, no "
+        "  markdown, no code fences. Just the 4 plain question lines.\n"
+        "- Each line must be a direct, natural question or instruction the user "
+        "  might plausibly ask next, given the conversation topic.\n"
+        "- Each line must be <= 90 characters.\n"
+        "- Suggestions must be RELEVANT to the recent conversation. If the topic "
+        "  is weather, suggest weather follow-ups. If it's cricket, suggest "
+        "  cricket follow-ups. If it's code, suggest code follow-ups. NEVER mix.\n"
+        "- Do not repeat questions already asked verbatim in the conversation."
+    )
+
+    client = get_llm_client()
+    chosen = model or settings.LLM_MODEL
+    try:
+        resp = client.chat.completions.create(
+            model=chosen,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": (
+                    f"Recent conversation:\n\n{transcript}\n\n"
+                    "Generate 4 follow-up suggestions now (4 lines, plain text, no markup):"
+                )},
+            ],
+            temperature=0.6,
+            max_tokens=400,
+            **tracking_kwargs("follow_up_suggestions"),
+        )
+        raw = (resp.choices[0].message.content or "").strip()
+    except Exception:
+        return _generic_follow_ups(thread.messages[-1].content if thread.messages else "")
+
+    suggestions: list[str] = []
+    seen: set[str] = set()
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # Strip common decoration the model may add: bullets, numbering, quotes.
+        line = re.sub(r"^\s*(?:[\-\*\u2022\u00b7]|\d+\s*[\.\)])\s*", "", line)
+        line = line.strip().strip("\"'`*_")
+        if not line or len(line) < 5:
+            continue
+        # Skip lines that look like preamble/explanation rather than a question.
+        low = line.lower()
+        if low.startswith(("here are", "here's", "sure", "of course", "based on")):
+            continue
+        if line in seen:
+            continue
+        seen.add(line)
+        if len(line) > 140:
+            line = line[:140].rstrip() + "…"
+        suggestions.append(line)
+        if len(suggestions) >= 4:
+            break
+
+    if not suggestions:
+        return _generic_follow_ups(thread.messages[-1].content if thread.messages else "")
+
+    # If the model produced fewer than 4 valid lines, top up with topic-aware
+    # generic suggestions so the UI always has a useful set.
+    if len(suggestions) < 4:
+        last = thread.messages[-1].content if thread.messages else ""
+        for extra in _generic_follow_ups(last):
+            if extra not in suggestions:
+                suggestions.append(extra)
+            if len(suggestions) >= 4:
+                break
+
+    return suggestions[:4]
+
+
+def _generic_follow_ups(last_message: str) -> list[str]:
+    """Tiny topic-aware default set used when the LLM call fails."""
+    text = (last_message or "").lower()
+    if "```" in text or " code" in text or "python" in text or "function" in text:
+        return [
+            "Can you optimize this and explain the time complexity?",
+            "Add edge-case handling and tests.",
+            "Convert this to TypeScript.",
+            "Walk me through the code line by line.",
+        ]
+    if "weather" in text or "temperature" in text or "°c" in text:
+        return [
+            "What about tomorrow's forecast?",
+            "Will it rain today?",
+            "Show the weekly forecast.",
+            "Compare this with another city.",
+        ]
+    if "bitcoin" in text or "crypto" in text or "usd" in text:
+        return [
+            "How has the price moved this week?",
+            "Compare Bitcoin and Ethereum.",
+            "What are the current gas fees?",
+            "Show top 10 cryptocurrencies by market cap.",
+        ]
+    if "match" in text or "cricket" in text or "score" in text:
+        return [
+            "Show the full scorecard.",
+            "Who are the top run scorers this season?",
+            "When is the next match?",
+            "Show the points table.",
+        ]
+    return [
+        "Can you explain that in simpler terms?",
+        "Summarise this in 5 bullet points.",
+        "What should I do next, step by step?",
+        "Show this as a table.",
+    ]

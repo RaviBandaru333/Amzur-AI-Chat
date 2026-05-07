@@ -11,25 +11,14 @@ from app.core.security import hash_password, verify_password
 from app.models import User
 from app.services import user_service
 
-ALLOWED_DOMAIN = "amzur.com"
-
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
 
 
-def _check_domain(email: str) -> None:
-    if not email.lower().endswith(f"@{ALLOWED_DOMAIN}"):
-        raise HTTPException(
-            status_code=403,
-            detail=f"Only @{ALLOWED_DOMAIN} accounts may sign in",
-        )
-
-
 async def register_employee(
     db: AsyncSession, email: str, password: str, full_name: str | None
 ) -> User:
-    _check_domain(email)
     existing = await user_service.get_user_by_email(db, email)
     if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
@@ -42,7 +31,6 @@ async def register_employee(
 
 
 async def login_employee(db: AsyncSession, email: str, password: str) -> User:
-    _check_domain(email)
     user = await user_service.get_user_by_email(db, email)
     if not user or not user.hashed_password:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -105,7 +93,6 @@ async def google_exchange_and_login(db: AsyncSession, code: str) -> User:
     picture = profile.get("picture")
     if not email or not google_id:
         raise HTTPException(status_code=400, detail="Google profile missing email/id")
-    _check_domain(email)
 
     by_google = await user_service.get_user_by_google_id(db, google_id)
     if by_google:

@@ -72,7 +72,12 @@ def _summarize_source(source_name: str, payload: Any) -> dict[str, Any]:
         return {"bitcoin": data.get("bitcoin")}
 
     if source_name == "weather_open_meteo":
-        return {"current_weather": data.get("current_weather")}
+        return {
+            "current_weather": data.get("current_weather"),
+            "location_name": data.get("location_name"),
+            "daily": data.get("daily"),
+            "hourly": data.get("hourly"),
+        }
 
     if source_name == "sports_cricket_events":
         events = data.get("events") if isinstance(data.get("events"), list) else []
@@ -224,35 +229,373 @@ def _deterministic_rescue(query: str, data: dict[str, Any]) -> str | None:
     return None
 
 
+_CATEGORY_HEADINGS = {
+    "crypto":      "📊 Crypto Price",
+    "weather":     "🌦️ Weather",
+    "stocks":      "📈 Stocks / Market",
+    "mutual_fund": "💰 Mutual Funds",
+    "sports":      "🏏 Sports / Cricket",
+    "news":        "📰 Top Headlines",
+}
+
+
+def _first_ok(sources: dict[str, Any]) -> tuple[str, dict] | None:
+    """Return (source_name, raw_data) for the first source that has ok=True."""
+    if not isinstance(sources, dict):
+        return None
+    for name, payload in sources.items():
+        if isinstance(payload, dict) and payload.get("ok"):
+            return name, payload.get("data") or {}
+    return None
+
+
+def _section_crypto(sources: dict[str, Any]) -> str:
+    found = _first_ok(sources)
+    if not found:
+        return "Data not available right now."
+    _, raw = found
+    btc = raw.get("bitcoin") if isinstance(raw, dict) else None
+    if isinstance(btc, dict) and btc.get("usd") is not None:
+        usd = btc["usd"]
+        return f"Bitcoin is currently **${usd:,} USD**.\n- Source: CoinGecko"
+    return "Data not available right now."
+
+
+def _section_weather(sources: dict[str, Any], query: str) -> str:
+    found = _first_ok(sources)
+    if not found:
+        return "Data not available right now."
+    _, raw = found
+    if not isinstance(raw, dict):
+        return "Data not available right now."
+    cw = raw.get("current_weather")
+    if not isinstance(cw, dict):
+        return "Data not available right now."
+    location = raw.get("location_name") or "your area"
+    temp = cw.get("temperature")
+    wind = cw.get("windspeed")
+    code = cw.get("weathercode")
+
+    bits: list[str] = []
+    if temp is not None:
+        bits.append(f"**{temp}°C**")
+    if wind is not None:
+        bits.append(f"wind {wind} km/h")
+    if code is not None:
+        bits.append(f"code {code}")
+    if not bits:
+        return "Data not available right now."
+
+    lines = [f"Current weather in **{location}**: " + ", ".join(bits)]
+
+    # Daily min/max + precipitation total (when Open-Meteo extras are present).
+    daily = raw.get("daily") if isinstance(raw, dict) else None
+    if isinstance(daily, dict):
+        tmax = (daily.get("temperature_2m_max") or [None])[0]
+        tmin = (daily.get("temperature_2m_min") or [None])[0]
+        precip = (daily.get("precipitation_sum") or [None])[0]
+        extra = []
+        if tmin is not None and tmax is not None:
+            extra.append(f"today {tmin}°C – {tmax}°C")
+        if precip is not None:
+            extra.append(f"precipitation {precip} mm")
+        if extra:
+            lines.append("- " + ", ".join(extra))
+
+    # Current-hour humidity + precipitation probability from the hourly array.
+    hourly = raw.get("hourly") if isinstance(raw, dict) else None
+    cw_time = cw.get("time")
+    if isinstance(hourly, dict) and cw_time:
+        times = hourly.get("time") or []
+        try:
+            idx = times.index(cw_time) if cw_time in times else 0
+        except ValueError:
+            idx = 0
+        humidity_arr = hourly.get("relative_humidity_2m") or []
+        precip_arr = hourly.get("precipitation_probability") or []
+        humidity = humidity_arr[idx] if idx < len(humidity_arr) else None
+        precip_prob = precip_arr[idx] if idx < len(precip_arr) else None
+        extras = []
+        if humidity is not None:
+            extras.append(f"humidity {humidity}%")
+        if precip_prob is not None:
+            extras.append(f"rain chance {precip_prob}%")
+        if extras:
+            lines.append("- " + ", ".join(extras))
+
+    lines.append("- Source: Open-Meteo")
+    _ = query  # signature stable for future query-aware tweaks
+    return "\n".join(lines)
+
+
+def _section_stocks(sources: dict[str, Any]) -> str:
+    # Try Yahoo Reliance first
+    yh = sources.get("finance_reliance_yahoo")
+    if isinstance(yh, dict) and yh.get("ok"):
+        chart = (yh.get("data") or {}).get("chart") or {}
+        result = chart.get("result") or []
+        if result and isinstance(result[0], dict):
+            meta = result[0].get("meta") or {}
+            symbol = meta.get("symbol", "RELIANCE.NS")
+            currency = meta.get("currency", "INR")
+            price = meta.get("regularMarketPrice")
+            if price is not None:
+                return f"**{symbol}**: {price} {currency}\n- Source: Yahoo Finance"
+    # Fallback to RSS markets
+    for key in ("rss_economic_times_markets", "rss_moneycontrol_finance"):
+        feed = sources.get(key)
+        if isinstance(feed, dict) and feed.get("ok"):
+            items = (feed.get("data") or {}).get("items") or []
+            if items:
+                titles = [i.get("title") for i in items[:3] if isinstance(i, dict) and i.get("title")]
+                if titles:
+                    label = "Economic Times" if "economic" in key else "Moneycontrol"
+                    bullets = "\n".join(f"- {t}" for t in titles)
+                    return f"Latest market headlines:\n{bullets}\n- Source: {label}"
+    return "Data not available right now."
+
+
+def _section_mutual_fund(sources: dict[str, Any]) -> str:
+    mf = sources.get("mutual_fund_master")
+    if isinstance(mf, dict) and mf.get("ok"):
+        data = mf.get("data") or []
+        if isinstance(data, list) and data:
+            return f"Mutual fund master list available — **{len(data)}** schemes indexed.\n- Source: mfapi.in"
+    nf = sources.get("thenewsapi_mutual_fund_search")
+    if isinstance(nf, dict) and nf.get("ok"):
+        items = (nf.get("data") or {}).get("data") or []
+        if items:
+            titles = [i.get("title") for i in items[:3] if isinstance(i, dict)]
+            if titles:
+                return "Recent mutual fund news:\n" + "\n".join(f"- {t}" for t in titles) + "\n- Source: TheNewsAPI"
+    return "Data not available right now."
+
+
+def _section_sports(sources: dict[str, Any]) -> str:
+    ev = sources.get("sports_cricket_events")
+    if isinstance(ev, dict) and ev.get("ok"):
+        events = (ev.get("data") or {}).get("events") or []
+        if isinstance(events, list) and events:
+            lines = []
+            for item in events[:5]:
+                if not isinstance(item, dict):
+                    continue
+                title = item.get("strEvent") or "Match"
+                date = item.get("dateEvent") or ""
+                time = item.get("strTime") or ""
+                status = item.get("strStatus") or ""
+                lines.append(f"- {title} {date} {time} {status}".strip())
+            if lines:
+                return "Today's cricket matches:\n" + "\n".join(lines) + "\n- Source: TheSportsDB"
+    cm = sources.get("cricapi_current_matches")
+    if isinstance(cm, dict) and cm.get("ok"):
+        items = (cm.get("data") or {}).get("data") or []
+        if isinstance(items, list) and items:
+            lines = []
+            for item in items[:5]:
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("name") or "Match"
+                status = item.get("status") or ""
+                lines.append(f"- {name} — {status}".strip(" —"))
+            if lines:
+                return "Current matches:\n" + "\n".join(lines) + "\n- Source: CricAPI"
+    return "Data not available right now."
+
+
+def _section_news(sources: dict[str, Any]) -> str:
+    """Aggregate up to 5 headlines across all news sources, deduped by title."""
+    seen_titles: set[str] = set()
+    bullets: list[str] = []
+
+    def add_items(items: list, source_label: str) -> None:
+        for item in items:
+            if len(bullets) >= 5:
+                return
+            if not isinstance(item, dict):
+                continue
+            title = (item.get("title") or "").strip()
+            if not title or title.lower() in seen_titles:
+                continue
+            seen_titles.add(title.lower())
+            bullets.append(f"{len(bullets) + 1}. {title} — *{source_label}*")
+
+    # Topic search first (most relevant to user query)
+    ts = sources.get("thenewsapi_topic_search")
+    if isinstance(ts, dict) and ts.get("ok"):
+        add_items((ts.get("data") or {}).get("data") or [], "TheNewsAPI search")
+
+    # Then RSS feeds
+    for key, label in [
+        ("rss_the_hindu_news", "The Hindu"),
+        ("rss_ndtv_india_news", "NDTV"),
+        ("rss_economic_times_markets", "Economic Times"),
+        ("rss_moneycontrol_finance", "Moneycontrol"),
+    ]:
+        feed = sources.get(key)
+        if isinstance(feed, dict) and feed.get("ok"):
+            add_items((feed.get("data") or {}).get("items") or [], label)
+
+    # Then TheNewsAPI top stories
+    for key, label in [
+        ("thenewsapi_top_india", "TheNewsAPI India"),
+        ("thenewsapi_business_india", "TheNewsAPI Business"),
+        ("thenewsapi_tech_finance_india", "TheNewsAPI Tech/Finance"),
+    ]:
+        feed = sources.get(key)
+        if isinstance(feed, dict) and feed.get("ok"):
+            add_items((feed.get("data") or {}).get("data") or [], label)
+
+    # Inshorts as fallback
+    ish = sources.get("news_inshorts_tech")
+    if isinstance(ish, dict) and ish.get("ok"):
+        add_items((ish.get("data") or {}).get("data") or [], "Inshorts Tech")
+
+    if not bullets:
+        return "Data not available right now."
+    return "\n".join(bullets)
+
+
+_SECTION_BUILDERS = {
+    "crypto":      lambda srcs, q: _section_crypto(srcs),
+    "weather":     lambda srcs, q: _section_weather(srcs, q),
+    "stocks":      lambda srcs, q: _section_stocks(srcs),
+    "mutual_fund": lambda srcs, q: _section_mutual_fund(srcs),
+    "sports":      lambda srcs, q: _section_sports(srcs),
+    "news":        lambda srcs, q: _section_news(srcs),
+}
+
+
+def ask_llm_multi_intent(
+    query: str,
+    multi_data: dict[str, Any],
+    user_email: str,
+    model: str | None = None,
+) -> str:
+    """Deterministic multi-section formatter.
+
+    GUARANTEES every detected intent appears as its own section by building each
+    section programmatically from the fetched API data. The LLM is NOT trusted
+    to enumerate categories — that was the source of the missing-section bug.
+
+    Sections with no usable data show 'Data not available right now' rather than
+    being silently dropped.
+
+    The `user_email` and `model` args are kept for future LLM polishing, but the
+    current implementation is purely deterministic for reliability.
+    """
+    intents: list[str] = list(multi_data.get("intents") or [])
+    categories: dict[str, Any] = multi_data.get("categories") or {}
+
+    if not intents:
+        return "No live-data intents detected in the query."
+
+    parts: list[str] = []
+    for intent in intents:
+        heading = _CATEGORY_HEADINGS.get(intent, intent.replace("_", " ").title())
+        cat = categories.get(intent) or {}
+        sources = cat.get("sources") or {}
+        builder = _SECTION_BUILDERS.get(intent)
+        body = builder(sources, query) if builder else "Data not available right now."
+        parts.append(f"{heading}:\n{body}")
+
+    parts.append("[Source: combined live APIs | Fetched: live]")
+    # Suppress unused-arg warnings while keeping signature stable for future LLM polishing
+    _ = (user_email, model)
+    return "\n\n".join(parts)
+
+
+def _detect_query_categories(query: str) -> list[str]:
+    """Detect which data categories the query asks about. Used to enforce sectioned output."""
+    q = query.lower()
+    categories: list[str] = []
+    if any(t in q for t in ["crypto", "bitcoin", "ethereum", "coin", "btc", "eth"]):
+        categories.append("crypto")
+    if any(t in q for t in ["weather", "temperature", "rain", "climate", "forecast"]):
+        categories.append("weather")
+    if any(t in q for t in ["stock", "share", "reliance", "nifty", "sensex", "tcs", "infy"]):
+        categories.append("stocks")
+    if any(t in q for t in ["mutual fund", "nav"]):
+        categories.append("mutual_fund")
+    if any(t in q for t in ["cricket", "ipl", "match", "score"]):
+        categories.append("sports")
+    if any(t in q for t in ["news", "headline", "headlines", "breaking", "latest news", "today news", "war", "conflict", "topic"]):
+        categories.append("news")
+    return categories
+
+
 def ask_llm(query: str, data: dict[str, Any], user_email: str, model: str | None = None) -> str:
     """Ask the model to filter, format, and interpret live API results intelligently."""
     chosen = model or settings.LLM_MODEL
     client = get_llm_client()
 
-    system_prompt = (
-        "You are a live-data assistant. Your task is to filter and extract ONLY the information "
-        "the user asked for, using the provided API data as source-of-truth.\n"
-        "Instructions:\n"
-        "1. Parse the user query to understand exactly what they want (headlines, prices, scores, etc).\n"
-        "2. Filter the API data to extract ONLY matching records.\n"
-        "3. Format cleanly with bullet points or tables when there are multiple items.\n"
-        "4. If data is not found, explicitly say 'No data found for: [user request]'.\n"
-        "5. Return readable output with source attribution when applicable.\n"
-        "6. For news/headlines: show title + short summary (2-3 lines max per item).\n"
-        "7. For prices/numbers: show in clear format with units and timestamps.\n"
-        "8. Never fabricate or assume data - only use what is provided."
-    )
+    categories = _detect_query_categories(query)
+    multi_category = len(categories) >= 2
+
+    if multi_category:
+        section_list = "\n".join(f"  - {_CATEGORY_HEADINGS[c]}" for c in categories if c in _CATEGORY_HEADINGS)
+        system_prompt = (
+            "You are an intelligent assistant. You receive structured real-time data from MULTIPLE APIs.\n"
+            "Your job: combine ALL the data and answer the user query in a clean sectioned format.\n\n"
+            "STRICT RULES:\n"
+            "- Do NOT ignore any section of the data\n"
+            "- Do NOT prioritize one source over another\n"
+            "- You MUST include ALL detected categories below as separate sections\n"
+            "- Do NOT hallucinate missing data — if a section has no data, say 'Data not available right now'\n"
+            "- Use the EXACT section headings (with emojis) shown below\n\n"
+            f"REQUIRED SECTIONS (in this order):\n{section_list}\n\n"
+            "OUTPUT TEMPLATE:\n"
+            "📊 Crypto Price:\n<one-line answer + 2-3 bullet details>\n\n"
+            "🌦️ Weather in <location>:\n<temp + conditions>\n\n"
+            "📰 Top Headlines:\n1. <title> — <source>\n2. ...\n3. ...\n\n"
+            "End with: [Source: combined live APIs | Fetched: live]\n"
+        )
+        user_instructions = (
+            "- Build ONE answer with all required sections above\n"
+            "- Each section: extract the relevant fields from the matching API in the data below\n"
+            "- For news section: list top 3-5 headlines with source attribution\n"
+            "- For weather: include city/location if present in data\n"
+            "- For prices: show currency and value clearly\n"
+            "- Keep it readable, no JSON dumps"
+        )
+    else:
+        system_prompt = (
+            "You are a smart AI assistant with access to real-time data tools.\n\n"
+            "DECISION LOGIC:\n"
+            "1. Real-time API data is provided below. First check if it contains the answer.\n"
+            "2. If the data IS relevant to the query — use it. Extract exactly what was asked.\n"
+            "   - News/conflict/war: list headlines with dates and source names.\n"
+            "   - Prices/numbers: show value with units and fetch time.\n"
+            "   - Sports: show match names, scores, status.\n"
+            "   - Weather: show temperature, conditions, location.\n"
+            "3. If the data does NOT contain an answer to the query (e.g. calendar questions,\n"
+            "   general knowledge, history, definitions) — answer from your training knowledge.\n"
+            "   In that case do NOT mention live data and do NOT add a source tag.\n\n"
+            "OUTPUT FORMAT (when using live data):\n"
+            "- One-line direct answer first.\n"
+            "- Key details in bullets or short paragraphs.\n"
+            "- End with: [Source: {source name} | Fetched: live]\n\n"
+            "OUTPUT FORMAT (when answering from training knowledge):\n"
+            "- Just answer clearly and helpfully. No source tag needed.\n\n"
+            "NEVER say 'I don't have real-time data' or 'as of my knowledge cutoff'.\n"
+            "NEVER output 'No data found' — always give the best answer you can."
+        )
+        user_instructions = (
+            "- If the data answers the query: extract the relevant parts, show top 5-10 results, "
+            "use bullets or paragraphs, end with [Source: <name> | Fetched: live]\n"
+            "- If the data does NOT answer the query: answer from your training knowledge normally.\n"
+            "- Never say 'No data found'. Always give the best answer you can."
+        )
 
     focused_data = _prepare_live_context(query, data)
 
     user_prompt = (
-        f"User Query (what they want):\n{query}\n\n"
-        "Live API Data (filter and format from this only):\n"
+        f"User Query:\n{query}\n\n"
+        f"Detected Categories: {categories or ['general']}\n\n"
+        "Real-time API Data from MULTIPLE sources (use ALL relevant sections):\n"
         f"{_compact_json(focused_data, limit=12000)}\n\n"
         "Instructions:\n"
-        "- Extract ONLY what matches the user query\n"
-        "- Show top 5-10 results if multiple items\n"
-        "- Use clear formatting (bullets, tables, or paragraphs)"
+        f"{user_instructions}"
     )
 
     response = client.chat.completions.create(
@@ -262,7 +605,7 @@ def ask_llm(query: str, data: dict[str, Any], user_email: str, model: str | None
             {"role": "user", "content": user_prompt},
         ],
         temperature=0.2,
-        max_tokens=1200,
+        max_tokens=1500,
         user=user_email,
         **_tracking_without_user("live_data_filter_format"),
     )

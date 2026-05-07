@@ -12,12 +12,20 @@ import type {
 } from "../types";
 
 const CONFIGURED_API_BASE = import.meta.env.VITE_API_BASE as string | undefined;
-const API_BASE_CANDIDATES = [
-  CONFIGURED_API_BASE,
-  "http://localhost:8000",
-  "http://127.0.0.1:8001",
-].filter((v, i, arr): v is string => Boolean(v) && arr.indexOf(v) === i);
-const REQUEST_TIMEOUT_MS = 7000;
+
+function buildApiBaseCandidates(): string[] {
+  if (CONFIGURED_API_BASE) {
+    return [CONFIGURED_API_BASE];
+  }
+
+  const host = typeof window !== "undefined" ? window.location.hostname : "localhost";
+  // Keep the same hostname to preserve cookie-scoped auth (localhost != 127.0.0.1).
+  const sameHostCandidates = [`http://${host}:8000`, `http://${host}:8001`];
+  return sameHostCandidates.filter((v, i, arr) => arr.indexOf(v) === i);
+}
+
+const API_BASE_CANDIDATES = buildApiBaseCandidates();
+const REQUEST_TIMEOUT_MS = 10000;
 
 async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
   const controller = new AbortController();
@@ -45,7 +53,19 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
       if (!res.ok) {
         if (res.status === 401) throw new Error("UNAUTHORIZED");
         const text = await res.text();
-        throw new Error(`${res.status} ${res.statusText}: ${text}`);
+        let message = `${res.status} ${res.statusText}`;
+        try {
+          const body = JSON.parse(text);
+          const detail = body?.detail;
+          if (typeof detail === "string") message = detail;
+          else if (detail && typeof detail === "object") {
+            message = detail.message || detail.error || JSON.stringify(detail);
+          } else if (body?.message) message = body.message;
+          else if (text) message = text;
+        } catch {
+          if (text) message = text;
+        }
+        throw new Error(message);
       }
       return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
     } catch (err) {
@@ -121,6 +141,8 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ content, model, mode }),
     }),
+  getSuggestions: (threadId: string) =>
+    http<string[]>(`/api/threads/${threadId}/suggestions`),
   uploadFiles: async (files: File[]) => {
     const form = new FormData();
     for (const file of files) {
@@ -176,5 +198,83 @@ export const api = {
   // Simple chat (no thread, no auth — P1 fallback)
   chat: (messages: ChatMessage[]) =>
     http<ChatResponse>("/api/chat", { method: "POST", body: JSON.stringify({ messages }) }),
+
+  // LangChain ReAct agent (autonomous tool selection over weather/crypto/news)
+  agentChat: (query: string) =>
+    http<{
+      ok: boolean;
+      answer: string;
+      steps: Array<{ tool: string; tool_input: unknown; log: string; observation: string }>;
+    }>("/api/agent/chat", { method: "POST", body: JSON.stringify({ query }) }),
+
+  // Stream agent thinking events as SSE. Calls onEvent for every parsed event.
+  agentChatStream: async (
+    query: string,
+    onEvent: (event: { type: string; data: Record<string, unknown> }) => void,
+    signal?: AbortSignal
+  ): Promise<void> => {
+    let lastNetworkError: unknown = null;
+    for (const base of API_BASE_CANDIDATES) {
+      try {
+        const url = `${base}/api/agent/chat/stream?query=${encodeURIComponent(query)}`;
+        const res = await fetch(url, {
+          method: "GET",
+          credentials: "include",
+          headers: { Accept: "text/event-stream" },
+          signal,
+        });
+        if (!res.ok) {
+          if (res.status === 401) throw new Error("UNAUTHORIZED");
+          const text = await res.text();
+          throw new Error(`${res.status} ${res.statusText}: ${text}`);
+        }
+        const reader = res.body?.getReader();
+        if (!reader) throw new Error("No response body for SSE stream");
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          // Split on SSE event boundary (blank line).
+          let idx;
+          while ((idx = buffer.indexOf("\n\n")) !== -1) {
+            const raw = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            // Parse `data:` lines; ignore comments (`:` prefix) and `event:`.
+            const dataLines = raw
+              .split("\n")
+              .filter((l) => l.startsWith("data:"))
+              .map((l) => l.slice(5).trimStart());
+            if (dataLines.length === 0) continue;
+            const payload = dataLines.join("\n");
+            if (!payload || payload === "{}") continue;
+            try {
+              const parsed = JSON.parse(payload) as {
+                type: string;
+                data: Record<string, unknown>;
+              };
+              onEvent(parsed);
+            } catch {
+              // Ignore malformed events.
+            }
+          }
+        }
+        return;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const isNetworkIssue =
+          message.includes("Failed to fetch") ||
+          message.includes("NetworkError") ||
+          message.includes("aborted") ||
+          message.includes("AbortError");
+        if (!isNetworkIssue) throw err;
+        lastNetworkError = err;
+      }
+    }
+    throw lastNetworkError instanceof Error
+      ? lastNetworkError
+      : new Error("Unable to reach backend API");
+  },
 };
 
