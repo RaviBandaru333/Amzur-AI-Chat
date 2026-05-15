@@ -39,12 +39,17 @@ def ask_dataframe(
         max_retries=2,
         temperature=0,
     )
+    
+    # Create a more explicit prefix to force complete data analysis
+    prefix = _get_agent_prefix()
+    
     agent = create_pandas_dataframe_agent(
         llm,
         dataframe,
         verbose=False,
         return_intermediate_steps=True,
         allow_dangerous_code=True,
+        prefix=prefix,
     )
 
     # Configure agent executor to handle parsing errors gracefully
@@ -77,6 +82,31 @@ def ask_dataframe(
         "source": source,
         "intermediate_steps": steps,
     }
+
+
+def _get_agent_prefix() -> str:
+    """
+    Return an explicit system prompt that forces the agent to analyze the ENTIRE dataset
+    and use proper aggregation functions instead of returning partial results.
+    """
+    return """You are a data analysis assistant. You have access to a pandas DataFrame and Python tools.
+
+CRITICAL RULES:
+1. ALWAYS examine the ENTIRE dataset before answering - do NOT make assumptions
+2. For ANY aggregation question (total, sum, count, average, etc.):
+   - First, use df.info() to understand the data
+   - Then use GROUPBY with .sum(), .count(), .mean() for complete calculations
+   - Never return results from just the first row or a small sample
+3. For revenue/quantity/total questions:
+   - Use df[column].sum() to get the complete total
+   - Use df.groupby(column).agg({'target': 'sum'}) to get grouped totals
+   - Check that you've examined ALL rows in the DataFrame
+4. Before returning your final answer:
+   - Verify you've used pandas operations on the complete dataset
+   - Show the result with confirmation of row count analyzed
+   - Use exact numbers from calculations, not estimates
+
+Always use the tools provided to inspect and manipulate the data correctly."""
 
 
 def _load_dataframe(
