@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import pandas as pd
+from langchain.agents import AgentExecutor
 from langchain_experimental.agents.agent_toolkits import create_pandas_dataframe_agent
 from langchain_openai import ChatOpenAI
 
@@ -46,12 +47,27 @@ def ask_dataframe(
         allow_dangerous_code=True,
     )
 
-    result = agent.invoke(
-        {"input": question},
-        config={"metadata": {"user_email": user_email}},
-    )
+    # Configure agent executor to handle parsing errors gracefully
+    if isinstance(agent, AgentExecutor):
+        agent.handle_parsing_errors = True
+
+    try:
+        result = agent.invoke(
+            {"input": question},
+            config={"metadata": {"user_email": user_email}},
+        )
+    except Exception as e:
+        # If agent parsing fails, return error message to user
+        return {
+            "answer": f"Error analyzing data: {str(e)[:200]}",
+            "row_count": int(len(dataframe.index)),
+            "columns": [str(c) for c in dataframe.columns.tolist()],
+            "source": source,
+            "intermediate_steps": [],
+        }
 
     answer = str(result.get("output") or "No answer generated.")
+    answer = _clean_answer(answer)
     steps = _format_intermediate_steps(result.get("intermediate_steps"))
 
     return {
@@ -140,3 +156,19 @@ def _format_intermediate_steps(raw_steps: object) -> list[str]:
         except Exception:
             formatted.append(str(item)[:500])
     return formatted
+
+
+def _clean_answer(text: str) -> str:
+    """Remove excessive formatting and make answer more concise."""
+    if not text:
+        return text
+
+    # Remove excessive markdown bold formatting (e.g., **word** → word)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    # Remove excessive emphasis (e.g., ***word*** → word)
+    text = re.sub(r"\*{2,}([^*]+)\*{2,}", r"\1", text)
+    # Clean up excessive whitespace/newlines
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = text.strip()
+
+    return text
